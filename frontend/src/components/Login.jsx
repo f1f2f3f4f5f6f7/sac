@@ -1,45 +1,49 @@
-import React, { useState } from 'react';
+import React, { useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 const Login = () => {
   const [showPassword, setShowPassword] = useState(false);
-  const [formData, setFormData] = useState({ username: '', password: '' });
+  const [formData, setFormData] = useState({ username: "", password: "" });
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const navigate = useNavigate();
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
-    if (error) setError('');
+    if (error) setError("");
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
-    setError('');
-    setSuccess('');
+    setError("");
+    setSuccess("");
 
     try {
-      const response = await fetch('http://localhost:8000/api/login/', {
-        method: 'POST',
+      const response = await fetch("http://localhost:8000/api/login/", {
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json'
+          "Content-Type": "application/json",
         },
-        body: JSON.stringify(formData)
+        body: JSON.stringify(formData),
       });
 
       const data = await response.json();
       if (response.ok) {
-        setSuccess('Login exitoso!');
-        localStorage.setItem('authToken', data.token);
-        localStorage.setItem('user', JSON.stringify(data.user));
-        console.log('Login exitoso:', data);
-        // window.location.href = '/dashboard'; // descomenta si usas rutas
+        setSuccess("Login exitoso!");
+        localStorage.setItem("authToken", data.token);
+        localStorage.setItem("user", JSON.stringify(data.user));
+        console.log("Login exitoso:", data);
+        navigate("/dashboard");
       } else {
-        setError(data.error || 'Error en el login');
+        setError(data.error || "Error en el login");
       }
     } catch (err) {
-      setError('Error de conexión. Verifica que el servidor esté ejecutándose.');
+      setError(
+        "Error de conexión. Verifica que el servidor esté ejecutándose."
+      );
     } finally {
       setLoading(false);
     }
@@ -72,7 +76,11 @@ const Login = () => {
             {/* Input Usuario */}
             <div className="relative w-[488px] h-[58px]">
               <span className="absolute inset-y-0 left-0 flex items-center pl-3">
-                <img src="/login_icon.png" alt="Usuario" className="w-7 h-7 text-gray-400 block" />
+                <img
+                  src="/login_icon.png"
+                  alt="Usuario"
+                  className="w-7 h-7 text-gray-400 block"
+                />
               </span>
               <input
                 type="text"
@@ -81,17 +89,21 @@ const Login = () => {
                 onChange={handleInputChange}
                 placeholder="Usuario"
                 className="pl-12 pr-12 py-2 w-full h-full border border-[#E7E7E7] hover:border-[#00024A] rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-[#00024A]
-                          text-black font-poppins text-[14.85px] transition-colors duration-200" 
+                          text-black font-poppins text-[14.85px] transition-colors duration-200"
               />
             </div>
 
             {/* Input Contraseña */}
             <div className="relative w-[488px] h-[58px]">
               <span className="absolute inset-y-0 left-0 flex items-center pl-3">
-                <img src="/password_icon.png" alt="Contraseña" className="w-5 h-6 text-gray-400" />
+                <img
+                  src="/password_icon.png"
+                  alt="Contraseña"
+                  className="w-5 h-6 text-gray-400"
+                />
               </span>
               <input
-                type={showPassword ? 'text' : 'password'}
+                type={showPassword ? "text" : "password"}
                 name="password"
                 value={formData.password}
                 onChange={handleInputChange}
@@ -105,7 +117,9 @@ const Login = () => {
                 className="absolute inset-y-0 right-0 flex items-center pr-3 focus:outline-none"
               >
                 <img
-                  src={showPassword ? "/eye_open_icon.png" : "/eye_close_icon.png"}
+                  src={
+                    showPassword ? "/eye_open_icon.png" : "/eye_close_icon.png"
+                  }
                   alt="Mostrar/Ocultar"
                   className="w-8 h-8"
                 />
@@ -119,13 +133,19 @@ const Login = () => {
                 className="w-[488px] h-[58px] bg-[#8181A7] text-white font-poppins font-semibold text-[16.29px] rounded-md shadow-sm hover:bg-[#6c6c88] transition-colors"
                 disabled={loading}
               >
-                {loading ? 'Ingresando...' : 'Ingresar'}
+                {loading ? "Ingresando..." : "Ingresar"}
               </button>
             </div>
 
             {/* Mensaje de error o éxito */}
-            {error && <p className="text-red-500 font-medium font-poppins">{error}</p>}
-            {success && <p className="text-green-600 font-medium font-poppins">{success}</p>}
+            {error && (
+              <p className="text-red-500 font-medium font-poppins">{error}</p>
+            )}
+            {success && (
+              <p className="text-green-600 font-medium font-poppins">
+                {success}
+              </p>
+            )}
           </form>
         </div>
       </div>
