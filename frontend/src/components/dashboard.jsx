@@ -444,7 +444,6 @@ const Dashboard = () => {
 
   // Calcular datos para la página actual
   const totalItems = filteredData.length;
-  const totalPages = Math.ceil(totalItems / ITEMS_PER_PAGE);
   const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
   const currentItems = filteredData.slice(
     startIndex,
