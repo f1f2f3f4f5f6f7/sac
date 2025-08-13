@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { logout } from "../utils/logout";
+import { ChevronDown, ChevronUp, Filter } from "lucide-react";
 
 const ITEMS_PER_PAGE = 7;
 
@@ -222,43 +223,50 @@ const FilterDropdown = () => {
   });
 
   const toggleDropdown = () => setIsOpen(!isOpen);
-
   const toggleFilter = (key) => {
     setFilters((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
   return (
-    <div className="max-w-[200px] ml-4">
+    <div className="w-full max-w-[220px] ml-4">
       <div
-        className="flex justify-between items-center bg-white rounded-md px-4 py-2 shadow cursor-pointer select-none"
+        className="flex justify-between items-center bg-white rounded-lg px-4 py-2 shadow-sm border border-gray-200 cursor-pointer select-none hover:shadow-md transition-all duration-200"
         onClick={toggleDropdown}
       >
-        <span className="font-semibold text-gray-800">Elementos</span>
-        <span className="text-gray-600 text-xl font-bold">{isOpen ? "-" : "+"}</span>
+        <span className="font-medium text-gray-800">Elementos</span>
+        {isOpen ? (
+          <ChevronUp size={18} className="text-gray-600" />
+        ) : (
+          <ChevronDown size={18} className="text-gray-600" />
+        )}
       </div>
 
-      {isOpen && (
-        <div className="bg-white rounded-b-md border border-t-0 shadow px-4 py-2 space-y-2">
-          <label className="flex items-center space-x-2 cursor-pointer">
+      <div
+        className={`overflow-hidden transition-all duration-300 ease-in-out ${
+          isOpen ? "max-h-40 opacity-100 mt-1" : "max-h-0 opacity-0"
+        }`}
+      >
+        <div className="bg-white rounded-lg border border-gray-200 shadow-sm px-4 py-3 space-y-3">
+          <label className="flex items-center gap-2 cursor-pointer hover:bg-gray-50 p-1 rounded-md">
             <input
               type="checkbox"
               checked={filters.mayores}
               onChange={() => toggleFilter("mayores")}
-              className="w-4 h-4"
+              className="w-4 h-4 accent-blue-500"
             />
-            <span>Mayores</span>
+            <span className="text-gray-700">Mayores</span>
           </label>
-          <label className="flex items-center space-x-2 cursor-pointer">
+          <label className="flex items-center gap-2 cursor-pointer hover:bg-gray-50 p-1 rounded-md">
             <input
               type="checkbox"
               checked={filters.menores}
               onChange={() => toggleFilter("menores")}
-              className="w-4 h-4"
+              className="w-4 h-4 accent-blue-500"
             />
-            <span>Menores</span>
+            <span className="text-gray-700">Menores</span>
           </label>
         </div>
-      )}
+      </div>
     </div>
   );
 };
@@ -424,7 +432,7 @@ const Dashboard = () => {
           valor: "Sep 17, 2020",
           ubicacion: "Sedans",
         },
-        
+
         // agrega más para probar paginación
       ];
       setData(mockData);
@@ -465,30 +473,30 @@ const Dashboard = () => {
       <Navbar onNavigate={handleNavigate} />
 
       <div className="flex flex-1 bg-gray-100">
-  {/* Sidebar filtro fijo a la izquierda */}
-  <aside className="w-[250px] p-6 bg-gray-100 ml-[170px] py-20 overflow-x-auto">
-  <FilterDropdown />
-</aside>
+        {/* Sidebar filtro fijo a la izquierda */}
+        <aside className="w-[250px] p-6 bg-gray-100 ml-[170px] py-20 overflow-x-auto">
+          <FilterDropdown />
+        </aside>
 
+        {/* Contenido principal a la derecha */}
+        <main className="flex-1 px-8 py-20 max-w-full overflow-x-auto pr-[250px]">
+          <SearchBar searchTerm={searchTerm} setSearchTerm={setSearchTerm} />
 
-  {/* Contenido principal a la derecha */}
-  <main className="flex-1 px-8 py-20 max-w-full overflow-x-auto pr-[250px]">
-    <SearchBar searchTerm={searchTerm} setSearchTerm={setSearchTerm} />
-
-    <div className="max-w-[1190px] ml-auto">
-      <InventoryTable data={currentItems} />
-      <div className="mt-16 flex justify-end" style={{ minHeight: "40px" }}>
-        <Pagination
-          totalItems={totalItems}
-          currentPage={currentPage}
-          onPageChange={handlePageChange}
-        />
+          <div className="max-w-[1190px] ml-auto">
+            <InventoryTable data={currentItems} />
+            <div
+              className="mt-16 flex justify-end"
+              style={{ minHeight: "40px" }}
+            >
+              <Pagination
+                totalItems={totalItems}
+                currentPage={currentPage}
+                onPageChange={handlePageChange}
+              />
+            </div>
+          </div>
+        </main>
       </div>
-    </div>
-  </main>
-</div>
-
-
     </div>
   );
 };
