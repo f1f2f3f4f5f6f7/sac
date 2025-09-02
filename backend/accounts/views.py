@@ -101,6 +101,7 @@ def login_view(request):
     except Exception as e:
         return JsonResponse({'error': 'Error interno', 'message': str(e)}, status=500)
 
+@csrf_exempt
 @require_http_methods(["POST"])
 def logout_view(request):
     """Vista de logout que cierra la sesión"""
