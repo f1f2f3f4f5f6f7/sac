@@ -56,13 +56,11 @@ def login_view(request):
     """Login usando raw SQL"""
     try:
         data = json.loads(request.body)
-        email = data.get('email', '').strip().lower()
+        codigo = data.get('codigo', '').strip().upper()
         password = data.get('password', '')
 
-        if not email or not password:
+        if not codigo or not password:
             return JsonResponse({'error': 'Datos incompletos'}, status=400)
-        if not validate_email(email):
-            return JsonResponse({'error': 'Email inválido'}, status=400)
 
         hashed_password = hash_password(password)
 
@@ -71,8 +69,8 @@ def login_view(request):
                 SELECT u.id, u.nombre, u.email, u.rol, u.activo, e.nombre
                 FROM usuarios u
                 LEFT JOIN escuelas e ON u.escuela_id = e.id
-                WHERE u.email = %s AND u.password_hash = %s AND u.activo = true
-            """, (email, hashed_password))
+                WHERE u.codigo = %s AND u.password_hash = %s AND u.activo = true
+            """, (codigo, hashed_password))
             user = cursor.fetchone()
 
         if not user:
@@ -89,6 +87,7 @@ def login_view(request):
             'success': True,
             'user': {
                 'id': user[0],
+                'codigo': user[1],  # <-- Cambié 'nombre' por 'codigo' aquí
                 'nombre': user[1],
                 'email': user[2],
                 'rol': user[3],
