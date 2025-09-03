@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     'rest_framework',            # si planeas usar DRF
     'corsheaders',               # si necesitas CORS
     'accounts',                  # tu app
+    'dataImport',
 ]
 
 
@@ -98,4 +99,4 @@ STATIC_URL = 'static/'
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
 
-DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+DEFAULT_AUTO_FIELD = None  # Deshabilitar auto campos de Django
