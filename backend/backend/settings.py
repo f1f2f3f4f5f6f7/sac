@@ -100,3 +100,10 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = None  # Deshabilitar auto campos de Django
+
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": [],  # evita cargar django.contrib.auth
+    "DEFAULT_PERMISSION_CLASSES": [],      # evita permisos ligados a auth
+    "UNAUTHENTICATED_USER": None,          # 👈 clave: evita crear AnonymousUser
+    "UNAUTHENTICATED_TOKEN": None,
+}
