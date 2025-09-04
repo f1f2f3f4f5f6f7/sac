@@ -20,6 +20,24 @@ def normalize_key(key: str) -> str:
         .replace("á", "a")
     )
 
+CATEGORIA_MAP = {
+    "Menores": 8,
+    "Mayores": 7,
+    "Intangible": 3,
+}
+
+def validateCategory(nombreArchivo):
+    if "Menores" in nombreArchivo:
+        return CATEGORIA_MAP["Menores"]
+    if "Mayores" in nombreArchivo:
+        return CATEGORIA_MAP["Mayores"]
+    else:
+        return CATEGORIA_MAP["Intangible"]
+
+
+
+
+
 
 @api_view(["POST"])
 @parser_classes([MultiPartParser, FormParser])
@@ -57,6 +75,14 @@ def importar_inventario(request):
                 skipinitialspace=True,
             )
 
+        if "Categoría" not in df.columns:
+            df["Categoría"] = validateCategory(file.name)
+        else:
+            # Si viene en el archivo con texto, lo conviertes a ID
+            df["Categoría"] = df["Categoría"].apply(
+                lambda x: CATEGORIA_MAP.get(str(x).strip(), CATEGORIA_MAP["Intangible"])
+            )
+
         # columnas necesarias
         desired_columns = [
             "Inventario",
@@ -91,7 +117,7 @@ def importar_inventario(request):
                         """
                         INSERT INTO inventario_items (
                             inventario, descripcion, marca, valor, fecha_recibido,
-                            categoria, ubicacion, entregado_por, recibido_por
+                            categoria_id, ubicacion_id, entregado_por_id, recibido_por_id
                         )
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                         ON CONFLICT (inventario) DO UPDATE SET
@@ -99,10 +125,10 @@ def importar_inventario(request):
                             marca = EXCLUDED.marca,
                             valor = EXCLUDED.valor,
                             fecha_recibido = EXCLUDED.fecha_recibido,
-                            categoria = EXCLUDED.categoria,
-                            ubicacion = EXCLUDED.ubicacion,
-                            entregado_por = EXCLUDED.entregado_por,
-                            recibido_por = EXCLUDED.recibido_por;
+                            categoria_id = EXCLUDED.categoria_id,
+                            ubicacion_id = EXCLUDED.ubicacion_id,
+                            entregado_por_id = EXCLUDED.entregado_por_id,
+                            recibido_por_id = EXCLUDED.recibido_por_id;
                         """,
                         [
                             item.get("inventario"),
@@ -110,11 +136,11 @@ def importar_inventario(request):
                             item.get("marca"),
                             item.get("valor"),
                             item.get("fecha_recibido"),
-                            item.get("categoria"),
+                            item.get("categoria"),  # ya es el ID
                             item.get("ubicacion"),
                             item.get("funcionario_que_entrega"),
                             item.get("funcionario_que_recibe"),
-                        ],
+                        ]
                     )
 
         return Response(

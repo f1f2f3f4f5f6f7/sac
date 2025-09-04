@@ -99,7 +99,7 @@ STATIC_URL = 'static/'
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
 
-DEFAULT_AUTO_FIELD = None  # Deshabilitar auto campos de Django
+DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'  # Deshabilitar auto campos de Django
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [],  # evita cargar django.contrib.auth
