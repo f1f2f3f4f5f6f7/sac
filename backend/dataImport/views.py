@@ -21,8 +21,8 @@ def normalize_key(key: str) -> str:
     )
 
 CATEGORIA_MAP = {
-    "Menores": 8,
-    "Mayores": 7,
+    "Menores": 1,
+    "Mayores": 2,
     "Intangible": 3,
 }
 
@@ -33,10 +33,6 @@ def validateCategory(nombreArchivo):
         return CATEGORIA_MAP["Mayores"]
     else:
         return CATEGORIA_MAP["Intangible"]
-
-
-
-
 
 
 @api_view(["POST"])
@@ -75,10 +71,10 @@ def importar_inventario(request):
                 skipinitialspace=True,
             )
 
+        # Asignar categoría
         if "Categoría" not in df.columns:
             df["Categoría"] = validateCategory(file.name)
         else:
-            # Si viene en el archivo con texto, lo conviertes a ID
             df["Categoría"] = df["Categoría"].apply(
                 lambda x: CATEGORIA_MAP.get(str(x).strip(), CATEGORIA_MAP["Intangible"])
             )
@@ -103,23 +99,89 @@ def importar_inventario(request):
         for col in ["Marca", "Descripción", "FUNCIONARIO QUE ENTREGA", "FUNCIONARIO QUE RECIBE"]:
             df[col] = df[col].astype(str).str.strip()
 
+        # normalizar fechas
+        if "Fecha Recibido" in df.columns:
+            df["Fecha Recibido"] = pd.to_datetime(
+                df["Fecha Recibido"],
+                errors="coerce",
+                dayfirst=True,   # interpreta 29/7/2024 como 29 de julio
+            ).dt.strftime("%Y-%m-%d")
+
+        # limpiar valor ($, ,)
+        df["Valor"] = (
+            df["Valor"]
+            .astype(str)
+            .str.replace(r"[^\d.]", "", regex=True)
+        )
+        df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce").fillna(0)
+
         # renombrar columnas
         df = df[desired_columns]
         df.columns = [normalize_key(c) for c in df.columns]
 
         data_json = json.loads(df.to_json(orient="records", force_ascii=False))
 
+        not_found_ubicaciones = []
+        not_found_usuarios = []
+
         # UPSERT en inventario_items
         with transaction.atomic():
             with connection.cursor() as cursor:
                 for item in data_json:
+                    # Buscar id de edificio según ubicacion
+                    ubicacion_id = None
+                    ubicacion_nombre = item.get("ubicacion")
+                    if ubicacion_nombre:
+                        cursor.execute(
+                            "SELECT id FROM edificios WHERE LOWER(edificio) = LOWER(%s) LIMIT 1;",
+                            [ubicacion_nombre.strip()]
+                        )
+                        row = cursor.fetchone()
+                        if row:
+                            ubicacion_id = row[0]
+                        else:
+                            not_found_ubicaciones.append(ubicacion_nombre.strip())
+
+                    # Buscar id de usuario que entrega
+                    entregado_por_id = None
+                    entregado_nombre = item.get("funcionario_que_entrega")
+                    if entregado_nombre and entregado_nombre.lower() != "nan":
+                        cursor.execute(
+                            "SELECT id FROM usuarios WHERE LOWER(nombre) = LOWER(%s) LIMIT 1;",
+                            [entregado_nombre.strip()]
+                        )
+                        row = cursor.fetchone()
+                        if row:
+                            entregado_por_id = row[0]
+                        else:
+                            not_found_usuarios.append(entregado_nombre.strip())
+
+                    # Buscar id de usuario que recibe
+                    recibido_por_id = None
+                    recibido_nombre = item.get("funcionario_que_recibe")
+                    if recibido_nombre and recibido_nombre.lower() != "nan":
+                        cursor.execute(
+                            "SELECT id FROM usuarios WHERE LOWER(nombre) = LOWER(%s) LIMIT 1;",
+                            [recibido_nombre.strip()]
+                        )
+                        row = cursor.fetchone()
+                        if row:
+                            recibido_por_id = row[0]
+                        else:
+                            not_found_usuarios.append(recibido_nombre.strip())
+
+                    # Siempre dejar escuela en NULL
+                    escuela_id = None
+
+                    # UPSERT
                     cursor.execute(
                         """
                         INSERT INTO inventario_items (
                             inventario, descripcion, marca, valor, fecha_recibido,
-                            categoria_id, ubicacion_id, entregado_por_id, recibido_por_id
+                            categoria_id, ubicacion_id, entregado_por_id, recibido_por_id,
+                            escuela_id
                         )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         ON CONFLICT (inventario) DO UPDATE SET
                             descripcion = EXCLUDED.descripcion,
                             marca = EXCLUDED.marca,
@@ -128,7 +190,8 @@ def importar_inventario(request):
                             categoria_id = EXCLUDED.categoria_id,
                             ubicacion_id = EXCLUDED.ubicacion_id,
                             entregado_por_id = EXCLUDED.entregado_por_id,
-                            recibido_por_id = EXCLUDED.recibido_por_id;
+                            recibido_por_id = EXCLUDED.recibido_por_id,
+                            escuela_id = EXCLUDED.escuela_id;
                         """,
                         [
                             item.get("inventario"),
@@ -136,15 +199,21 @@ def importar_inventario(request):
                             item.get("marca"),
                             item.get("valor"),
                             item.get("fecha_recibido"),
-                            item.get("categoria"),  # ya es el ID
-                            item.get("ubicacion"),
-                            item.get("funcionario_que_entrega"),
-                            item.get("funcionario_que_recibe"),
+                            item.get("categoria"),
+                            ubicacion_id,
+                            entregado_por_id,
+                            recibido_por_id,
+                            escuela_id,  # siempre nulo
                         ]
                     )
 
         return Response(
-            {"status": "ok", "insertados": len(data_json)},
+            {
+                "status": "ok",
+                "insertados": len(data_json),
+                "ubicaciones_no_encontradas": list(set(not_found_ubicaciones)),
+                "usuarios_no_encontrados": list(set(not_found_usuarios)),
+            },
             status=status.HTTP_201_CREATED,
         )
 
