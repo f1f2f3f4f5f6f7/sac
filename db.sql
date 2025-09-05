@@ -1,76 +1,123 @@
--- =============================
--- Tipos (roles)
--- =============================
-CREATE TYPE rol_usuario AS ENUM ('director','profesor');
-
--- =============================
--- Tablas maestras
--- =============================
-CREATE TABLE escuelas (
-  id         SERIAL PRIMARY KEY,
-  nombre     VARCHAR(150) UNIQUE NOT NULL
-);
-
-CREATE TABLE usuarios (
-  id            SERIAL PRIMARY KEY,
-  codigo        VARCHAR(50) UNIQUE NOT NULL,
-  nombre        VARCHAR(150) NOT NULL,
-  email         VARCHAR(150) UNIQUE NOT NULL,
-  password_hash TEXT NOT NULL,
-  rol           rol_usuario NOT NULL DEFAULT 'profesor',
-  escuela_id    INT REFERENCES escuelas(id) ON DELETE RESTRICT,
-  activo        BOOLEAN NOT NULL DEFAULT TRUE
-);
-
-CREATE TABLE categorias (
-  id     SERIAL PRIMARY KEY,
-  nombre VARCHAR(100) UNIQUE NOT NULL
-);
-
-CREATE TABLE ubicaciones (
-  id       SERIAL PRIMARY KEY,
-  edificio VARCHAR(120) NOT NULL,
-  salon    VARCHAR(120) NOT NULL,
-  UNIQUE(edificio, salon)
-);
-
--- =============================
--- Inventario
--- =============================
-CREATE TABLE inventario_items (
-  id               SERIAL PRIMARY KEY,
-  inventario       VARCHAR(200) NOT NULL,   -- nombre del bien
-  descripcion      TEXT,
-  marca            VARCHAR(120),
-  valor            NUMERIC(12,2) NOT NULL DEFAULT 0,
-  fecha_recibido   DATE NOT NULL,
-  categoria_id     INT REFERENCES categorias(id) ON DELETE SET NULL,
-  ubicacion_id     INT REFERENCES ubicaciones(id) ON DELETE SET NULL,
-  entregado_por_id INT REFERENCES usuarios(id) ON DELETE SET NULL,
-  recibido_por_id  INT REFERENCES usuarios(id) ON DELETE SET NULL,
-  escuela_id       INT REFERENCES escuelas(id) ON DELETE SET NULL
-);
--- Enum solo si no existe
+-- =========================================================
+-- TIPOS
+-- (Ajusta los valores del enum según tu aplicación)
+-- =========================================================
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'accion_traza') THEN
-    CREATE TYPE accion_traza AS ENUM ('CREAR','ELIMINAR','TRASPASAR');
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'rol_usuario') THEN
+    CREATE TYPE rol_usuario AS ENUM ('admin', 'gestor', 'usuario');
   END IF;
 END$$;
 
-CREATE TABLE IF NOT EXISTS inventario_trazabilidad (
-  id          BIGSERIAL PRIMARY KEY,
-  inventario  VARCHAR NOT NULL
-              REFERENCES inventario_items(inventario) ON DELETE CASCADE,
-  fecha       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  accion      TEXT NOT NULL,      -- la defines tú desde el back: 'CREAR', 'ELIMINAR', 'TRASPASAR', etc.
-  detalle     TEXT,               -- opcional
-  usuario_id  INT4 REFERENCES usuarios(id),
-  meta        JSONB               -- para datos extra; p.ej. en traslado: {"ubicacion_anterior": 3, "ubicacion_nueva": 7}
+-- =========================================================
+-- TABLAS BÁSICAS
+-- =========================================================
+
+-- Escuelas
+CREATE TABLE IF NOT EXISTS public.escuelas (
+  id       SERIAL PRIMARY KEY,
+  nombre   VARCHAR NOT NULL
 );
 
--- Índices útiles
-CREATE INDEX IF NOT EXISTS idx_traza_inv_fecha ON inventario_trazabilidad(inventario, fecha DESC);
-CREATE INDEX IF NOT EXISTS idx_traza_accion    ON inventario_trazabilidad(accion);
-CREATE INDEX IF NOT EXISTS idx_traza_meta_gin  ON inventario_trazabilidad USING GIN (meta);
+-- Categorías
+CREATE TABLE IF NOT EXISTS public.categorias (
+  id       SERIAL PRIMARY KEY,
+  nombre   VARCHAR NOT NULL
+);
 
+-- Edificios
+CREATE TABLE IF NOT EXISTS public.edificios (
+  id       SERIAL PRIMARY KEY,
+  edificio VARCHAR NOT NULL
+);
+
+-- Usuarios
+CREATE TABLE IF NOT EXISTS public.usuarios (
+  id            SERIAL PRIMARY KEY,
+  codigo        INTEGER,              -- si debe ser único, descomenta la UNIQUE
+  nombre        VARCHAR NOT NULL,
+  email         VARCHAR NOT NULL,
+  password_hash TEXT    NOT NULL,
+  rol           rol_usuario NOT NULL,
+  escuela_id    INTEGER REFERENCES public.escuelas(id) ON UPDATE CASCADE ON DELETE SET NULL,
+  activo        BOOLEAN NOT NULL DEFAULT TRUE,
+  UNIQUE (email)
+  -- ,UNIQUE (codigo)
+);
+
+-- Salones (habitaciones/aulas) – el diagrama muestra una columna JSON con nombre truncado "salo..."
+-- Renombré a "salon" (JSON); si tu columna tiene otro nombre, cámbialo aquí.
+CREATE TABLE IF NOT EXISTS public.salones (
+  id          SERIAL PRIMARY KEY,
+  salon       JSONB,  -- datos del salón (número, capacidad, etc.)
+  id_edificio INTEGER REFERENCES public.edificios(id) ON UPDATE CASCADE ON DELETE SET NULL
+);
+
+-- =========================================================
+-- INVENTARIO
+-- =========================================================
+
+-- Items del inventario
+CREATE TABLE IF NOT EXISTS public.inventario_items (
+  id               SERIAL PRIMARY KEY,
+  inventario       VARCHAR NOT NULL,        -- código o folio de inventario
+  descripcion      TEXT,
+  marca            VARCHAR,
+  valor            NUMERIC,
+  fecha_recibido   DATE,
+  categoria_id     INTEGER REFERENCES public.categorias(id) ON UPDATE CASCADE ON DELETE SET NULL,
+  ubicacion_id     INTEGER REFERENCES public.salones(id)   ON UPDATE CASCADE ON DELETE SET NULL,
+  entregado_por_id INTEGER REFERENCES public.usuarios(id)  ON UPDATE CASCADE ON DELETE SET NULL,
+  recibido_por_id  INTEGER REFERENCES public.usuarios(id)  ON UPDATE CASCADE ON DELETE SET NULL,
+  escuela_id       INTEGER REFERENCES public.escuelas(id)  ON UPDATE CASCADE ON DELETE SET NULL
+);
+
+-- Trazabilidad / historial de movimientos del inventario
+CREATE TABLE IF NOT EXISTS public.inventario_trazabilidad (
+  id         BIGSERIAL PRIMARY KEY,
+  inventario INTEGER NOT NULL REFERENCES public.inventario_items(id)
+              ON UPDATE CASCADE ON DELETE CASCADE,
+  fecha      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  accion     TEXT,     -- p.ej. "alta", "traslado", "baja", etc.
+  detalle    TEXT,
+  usuario_id INTEGER REFERENCES public.usuarios(id) ON UPDATE CASCADE ON DELETE SET NULL,
+  meta       JSONB
+);
+
+-- =========================================================
+-- (Opcional) Tablas de Django que aparecen en el diagrama
+-- =========================================================
+
+CREATE TABLE IF NOT EXISTS public.django_migrations (
+  id      BIGSERIAL PRIMARY KEY,
+  app     VARCHAR NOT NULL,
+  name    VARCHAR NOT NULL,
+  applied TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.django_session (
+  session_key VARCHAR PRIMARY KEY,
+  session_data TEXT NOT NULL,
+  expire_date TIMESTAMPTZ NOT NULL
+);
+
+-- =========================================================
+-- ÍNDICES ÚTILES
+-- =========================================================
+CREATE INDEX IF NOT EXISTS idx_inventario_items_inventario
+  ON public.inventario_items (inventario);
+
+CREATE INDEX IF NOT EXISTS idx_inventario_items_categoria
+  ON public.inventario_items (categoria_id);
+
+CREATE INDEX IF NOT EXISTS idx_inventario_items_ubicacion
+  ON public.inventario_items (ubicacion_id);
+
+CREATE INDEX IF NOT EXISTS idx_inventario_trazabilidad_inventario_fecha
+  ON public.inventario_trazabilidad (inventario, fecha);
+
+CREATE INDEX IF NOT EXISTS idx_usuarios_escuela
+  ON public.usuarios (escuela_id);
+
+CREATE INDEX IF NOT EXISTS idx_salones_edificio
+  ON public.salones (id_edificio);

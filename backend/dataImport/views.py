@@ -20,11 +20,86 @@ def normalize_key(key: str) -> str:
         .replace("á", "a")
     )
 
+def normalize_name(name: str) -> str:
+    """
+    Normaliza un nombre quitando espacios y ordenando las palabras,
+    para que 'JUAN RAMON PERNALETE' = 'PERNALETE JUAN RAMON'
+    """
+    return " ".join(sorted(name.strip().lower().split())) if name else None
+
+
 CATEGORIA_MAP = {
     "Menores": 1,
     "Mayores": 2,
     "Intangible": 3,
 }
+
+def get_usuario_id(cursor, nombre):
+    if not nombre or str(nombre).lower() == "nan":
+        return None  # devolver None para que se maneje arriba
+
+    nombre_norm = nombre.strip()
+    print(f"DEBUG: Buscando usuario: '{nombre_norm}'")
+
+    # buscar directo
+    cursor.execute(
+        "SELECT id, nombre FROM usuarios WHERE LOWER(nombre) = LOWER(%s) LIMIT 1;",
+        [nombre_norm]
+    )
+    row = cursor.fetchone()
+    if row:
+        print(f"DEBUG: Usuario encontrado directo - ID: {row[0]}, Nombre DB: '{row[1]}'")
+        return row[0]
+
+    # buscar invirtiendo orden de palabras
+    invertido = " ".join(nombre_norm.split()[::-1])
+    print(f"DEBUG: Buscando invertido: '{invertido}'")
+    cursor.execute(
+        "SELECT id, nombre FROM usuarios WHERE LOWER(nombre) = LOWER(%s) LIMIT 1;",
+        [invertido]
+    )
+    row = cursor.fetchone()
+    if row:
+        print(f"DEBUG: Usuario encontrado invertido - ID: {row[0]}, Nombre DB: '{row[1]}'")
+        return row[0]
+
+    # buscar con LIKE más flexible (cada palabra)
+    print(f"DEBUG: Buscando con LIKE flexible para: '{nombre_norm}'")
+    palabras = nombre_norm.split()
+    condiciones = []
+    params = []
+    
+    for palabra in palabras:
+        if len(palabra) > 2:  # solo palabras de más de 2 caracteres
+            condiciones.append("LOWER(nombre) LIKE LOWER(%s)")
+            params.append(f"%{palabra}%")
+    
+    if condiciones:
+        query = "SELECT id, nombre FROM usuarios WHERE " + " AND ".join(condiciones) + " LIMIT 10;"
+        print(f"DEBUG: Query LIKE: {query}")
+        print(f"DEBUG: Params LIKE: {params}")
+        cursor.execute(query, params)
+        similares = cursor.fetchall()
+        if similares:
+            print(f"DEBUG: Usuarios similares encontrados: {similares}")
+            # Si encontramos usuarios similares, tomar el primero como válido
+            if similares:
+                print(f"DEBUG: Usando usuario similar - ID: {similares[0][0]}, Nombre: '{similares[0][1]}'")
+                return similares[0][0]
+
+    print(f"DEBUG: Usuario NO encontrado para: '{nombre_norm}'")
+    return 0
+
+
+def mostrar_usuarios_debug(cursor):
+    """Muestra todos los usuarios en la base de datos para debugging"""
+    cursor.execute("SELECT id, nombre FROM usuarios ORDER BY nombre LIMIT 20;")
+    usuarios = cursor.fetchall()
+    print("DEBUG: === LISTA DE USUARIOS EN BASE DE DATOS ===")
+    for user_id, nombre in usuarios:
+        print(f"DEBUG: ID: {user_id} - Nombre: '{nombre}'")
+    print("DEBUG: === FIN LISTA USUARIOS ===")
+
 
 def validateCategory(nombreArchivo):
     if "Menores" in nombreArchivo:
@@ -50,8 +125,22 @@ def importar_inventario(request):
 
     try:
         # leer excel -> csv buffer -> df
-        if file.name.endswith(".xls") or file.name.endswith(".xlsx"):
-            read_file = pd.read_excel(file)
+        if file.name.endswith(".xlsx"):
+            # Para archivos modernos de Excel
+            read_file = pd.read_excel(file, engine="openpyxl")
+            csv_buffer = io.StringIO()
+            read_file.to_csv(csv_buffer, index=False)
+            csv_buffer.seek(0)
+            df = pd.read_csv(
+                csv_buffer,
+                skip_blank_lines=True,
+                encoding="utf-8",
+                header=7,  # fila 8 tiene cabeceras
+                skipinitialspace=True,
+            )
+        elif file.name.endswith(".xls"):
+            # Para archivos antiguos de Excel
+            read_file = pd.read_excel(file, engine="xlrd")
             csv_buffer = io.StringIO()
             read_file.to_csv(csv_buffer, index=False)
             csv_buffer.seek(0)
@@ -104,8 +193,8 @@ def importar_inventario(request):
             df["Fecha Recibido"] = pd.to_datetime(
                 df["Fecha Recibido"],
                 errors="coerce",
-                dayfirst=True,   # interpreta 29/7/2024 como 29 de julio
-            ).dt.strftime("%Y-%m-%d")
+                dayfirst=True,
+            ).fillna(pd.Timestamp("2000-01-01")).dt.strftime("%Y-%m-%d")
 
         # limpiar valor ($, ,)
         df["Valor"] = (
@@ -127,6 +216,9 @@ def importar_inventario(request):
         # UPSERT en inventario_items
         with transaction.atomic():
             with connection.cursor() as cursor:
+                # Mostrar lista de usuarios para debugging
+                mostrar_usuarios_debug(cursor)
+                
                 for item in data_json:
                     # Buscar id de edificio según ubicacion
                     ubicacion_id = None
@@ -142,36 +234,17 @@ def importar_inventario(request):
                         else:
                             not_found_ubicaciones.append(ubicacion_nombre.strip())
 
-                    # Buscar id de usuario que entrega
-                    entregado_por_id = None
-                    entregado_nombre = item.get("funcionario_que_entrega")
-                    if entregado_nombre and entregado_nombre.lower() != "nan":
-                        cursor.execute(
-                            "SELECT id FROM usuarios WHERE LOWER(nombre) = LOWER(%s) LIMIT 1;",
-                            [entregado_nombre.strip()]
-                        )
-                        row = cursor.fetchone()
-                        if row:
-                            entregado_por_id = row[0]
-                        else:
-                            not_found_usuarios.append(entregado_nombre.strip())
+                    # Buscar usuarios usando la función mejorada
+                    entregado_por_id = get_usuario_id(cursor, item.get("funcionario_que_entrega"))
+                    recibido_por_id = get_usuario_id(cursor, item.get("funcionario_que_recibe"))
 
-                    # Buscar id de usuario que recibe
-                    recibido_por_id = None
-                    recibido_nombre = item.get("funcionario_que_recibe")
-                    if recibido_nombre and recibido_nombre.lower() != "nan":
-                        cursor.execute(
-                            "SELECT id FROM usuarios WHERE LOWER(nombre) = LOWER(%s) LIMIT 1;",
-                            [recibido_nombre.strip()]
-                        )
-                        row = cursor.fetchone()
-                        if row:
-                            recibido_por_id = row[0]
-                        else:
-                            not_found_usuarios.append(recibido_nombre.strip())
+                    # Si no se encuentra el usuario que recibe, saltar este registro
+                    if recibido_por_id is None:
+                        print(f"DEBUG: Saltando registro por usuario receptor no encontrado: {item.get('funcionario_que_recibe')}")
+                        continue
 
                     # Siempre dejar escuela en NULL
-                    escuela_id = None
+                    escuela_id = 0
 
                     # UPSERT
                     cursor.execute(
