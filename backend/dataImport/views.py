@@ -1,12 +1,16 @@
 import io
 import json
 import pandas as pd
+import unicodedata
+import re
+from rapidfuzz import fuzz
 from django.db import connection, transaction
 from rest_framework.decorators import api_view, parser_classes
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.response import Response
 from rest_framework import status
 from accounts.views import login_required_api  # Importar el decorador de autenticación
+
 
 def normalize_key(key: str) -> str:
     return (
@@ -20,79 +24,162 @@ def normalize_key(key: str) -> str:
         .replace("á", "a")
     )
 
-def normalize_name(name: str) -> str:
-    """
-    Normaliza un nombre quitando espacios y ordenando las palabras,
-    para que 'JUAN RAMON PERNALETE' = 'PERNALETE JUAN RAMON'
-    """
-    return " ".join(sorted(name.strip().lower().split())) if name else None
+# ================== FUNCIONES DE NOMBRES ==================
+
+def normalizar_texto(texto):
+    if not texto:
+        return ""
+    texto = unicodedata.normalize("NFD", texto)
+    texto = texto.encode("ascii", "ignore").decode("utf-8")
+    texto = re.sub(r"[^A-Za-z\s]", "", texto).upper().strip()
+    return texto
+
+def dividir_nombre(nombre_completo):
+    partes = normalizar_texto(nombre_completo).split()
+    num = len(partes)
+
+    if num == 0:
+        return {"nombre1": "", "nombre2": "", "apellido1": "", "apellido2": ""}
+
+    elif num == 1:
+        return {"nombre1": partes[0], "nombre2": "", "apellido1": "", "apellido2": ""}
+
+    elif num == 2:
+        return {
+            "nombre1": partes[0],
+            "nombre2": "",
+            "apellido1": partes[1],
+            "apellido2": "",
+        }
+
+    elif num == 3:
+        return {
+            "nombre1": partes[0],
+            "nombre2": "",
+            "apellido1": partes[1],
+            "apellido2": partes[2],
+        }
+
+    else:  # 4 o más
+        return {
+            "nombre1": partes[0],
+            "nombre2": partes[1],
+            "apellido1": partes[2],
+            "apellido2": partes[3],
+        }
+
+def comparar_nombres_completos(
+    n1,
+    n2,
+    umbral_global=85,
+    umbrales_por_parte={"nombre1": 85, "nombre2": 75, "apellido1": 85, "apellido2": 75},
+    doble_error_limite=2,
+):
+    p1 = dividir_nombre(n1)
+    p2 = dividir_nombre(n2)
+
+    scores = {
+        "nombre1": fuzz.ratio(p1["nombre1"], p2["nombre1"]),
+        "nombre2": fuzz.ratio(p1["nombre2"], p2["nombre2"]),
+        "apellido1": fuzz.ratio(p1["apellido1"], p2["apellido1"]),
+        "apellido2": fuzz.ratio(p1["apellido2"], p2["apellido2"]),
+    }
+
+    similitud_promedio = (
+        0.25 * scores["nombre1"]
+        + 0.15 * scores["nombre2"]
+        + 0.3 * scores["apellido1"]
+        + 0.3 * scores["apellido2"]
+    )
+
+    campos_en_riesgo = 0
+    for parte, umbral in umbrales_por_parte.items():
+        score = scores[parte]
+        if score < umbral:
+            return False, similitud_promedio, scores
+        elif umbral <= score < 90:
+            campos_en_riesgo += 1
+
+    if campos_en_riesgo >= doble_error_limite:
+        return False, similitud_promedio, scores
+
+    return similitud_promedio >= umbral_global, similitud_promedio, scores
 
 
+# ================== CATEGORÍAS ==================
 CATEGORIA_MAP = {
     "Menores": 1,
     "Mayores": 2,
     "Intangible": 3,
 }
 
+
+# ================== BUSQUEDA DE USUARIOS ==================
 def get_usuario_id(cursor, nombre):
     if not nombre or str(nombre).lower() == "nan":
-        return None  # devolver None para que se maneje arriba
+        return None
 
     nombre_norm = nombre.strip()
     print(f"DEBUG: Buscando usuario: '{nombre_norm}'")
 
-    # buscar directo
+    # 1. Directo
     cursor.execute(
         "SELECT id, nombre FROM usuarios WHERE LOWER(nombre) = LOWER(%s) LIMIT 1;",
-        [nombre_norm]
+        [nombre_norm],
     )
     row = cursor.fetchone()
     if row:
         print(f"DEBUG: Usuario encontrado directo - ID: {row[0]}, Nombre DB: '{row[1]}'")
         return row[0]
 
-    # buscar invirtiendo orden de palabras
+    # 2. Invertido
     invertido = " ".join(nombre_norm.split()[::-1])
-    print(f"DEBUG: Buscando invertido: '{invertido}'")
     cursor.execute(
         "SELECT id, nombre FROM usuarios WHERE LOWER(nombre) = LOWER(%s) LIMIT 1;",
-        [invertido]
+        [invertido],
     )
     row = cursor.fetchone()
     if row:
         print(f"DEBUG: Usuario encontrado invertido - ID: {row[0]}, Nombre DB: '{row[1]}'")
         return row[0]
 
-    # buscar con LIKE más flexible (cada palabra)
-    print(f"DEBUG: Buscando con LIKE flexible para: '{nombre_norm}'")
+    # 3. LIKE
     palabras = nombre_norm.split()
     condiciones = []
     params = []
-    
     for palabra in palabras:
-        if len(palabra) > 2:  # solo palabras de más de 2 caracteres
+        if len(palabra) > 2:
             condiciones.append("LOWER(nombre) LIKE LOWER(%s)")
             params.append(f"%{palabra}%")
-    
     if condiciones:
         query = "SELECT id, nombre FROM usuarios WHERE " + " AND ".join(condiciones) + " LIMIT 10;"
-        print(f"DEBUG: Query LIKE: {query}")
-        print(f"DEBUG: Params LIKE: {params}")
         cursor.execute(query, params)
         similares = cursor.fetchall()
         if similares:
-            print(f"DEBUG: Usuarios similares encontrados: {similares}")
-            # Si encontramos usuarios similares, tomar el primero como válido
-            if similares:
-                print(f"DEBUG: Usando usuario similar - ID: {similares[0][0]}, Nombre: '{similares[0][1]}'")
-                return similares[0][0]
+            print(f"DEBUG: Usuarios similares encontrados (LIKE): {similares}")
+            return similares[0][0]
+
+    # 4. Fuzzy (último recurso)
+    cursor.execute("SELECT id, nombre FROM usuarios")
+    todos = cursor.fetchall()
+
+    mejor_match = None
+    mejor_score = 0
+    for user_id, nombre_db in todos:
+        valido, score, _ = comparar_nombres_completos(nombre_norm, nombre_db)
+        if valido and score > mejor_score:
+            mejor_match = user_id
+            mejor_score = score
+
+    if mejor_match:
+        print(f"DEBUG: Usuario encontrado por FUZZY - ID: {mejor_match}, Score: {mejor_score}")
+        return mejor_match
 
     print(f"DEBUG: Usuario NO encontrado para: '{nombre_norm}'")
     return 0
 
 
 def mostrar_usuarios_debug(cursor):
-    """Muestra todos los usuarios en la base de datos para debugging"""
     cursor.execute("SELECT id, nombre FROM usuarios ORDER BY nombre LIMIT 20;")
     usuarios = cursor.fetchall()
     print("DEBUG: === LISTA DE USUARIOS EN BASE DE DATOS ===")
@@ -101,6 +188,7 @@ def mostrar_usuarios_debug(cursor):
     print("DEBUG: === FIN LISTA USUARIOS ===")
 
 
+# ================== VALIDACION CATEGORÍA ==================
 def validateCategory(nombreArchivo):
     if "Menores" in nombreArchivo:
         return CATEGORIA_MAP["Menores"]
@@ -110,11 +198,12 @@ def validateCategory(nombreArchivo):
         return CATEGORIA_MAP["Intangible"]
 
 
+# ================== IMPORTAR INVENTARIO ==================
 @api_view(["POST"])
 @parser_classes([MultiPartParser, FormParser])
 def importar_inventario(request):
     """
-    Recibe un Excel/CSV, limpia los datos y hace UPSERT en la tabla inventario_items usando SQL crudo.
+    Recibe un Excel/CSV, limpia los datos y hace UPSERT en la tabla inventario_items.
     """
     file = request.FILES.get("file")
     if not file:
@@ -124,129 +213,77 @@ def importar_inventario(request):
         )
 
     try:
-        # leer excel -> csv buffer -> df
+        # --- Lectura del archivo ---
         if file.name.endswith(".xlsx"):
-            # Para archivos modernos de Excel
             read_file = pd.read_excel(file, engine="openpyxl")
             csv_buffer = io.StringIO()
             read_file.to_csv(csv_buffer, index=False)
             csv_buffer.seek(0)
-            df = pd.read_csv(
-                csv_buffer,
-                skip_blank_lines=True,
-                encoding="utf-8",
-                header=7,  # fila 8 tiene cabeceras
-                skipinitialspace=True,
-            )
+            df = pd.read_csv(csv_buffer, skip_blank_lines=True, encoding="utf-8", header=7, skipinitialspace=True)
         elif file.name.endswith(".xls"):
-            # Para archivos antiguos de Excel
             read_file = pd.read_excel(file, engine="xlrd")
             csv_buffer = io.StringIO()
             read_file.to_csv(csv_buffer, index=False)
             csv_buffer.seek(0)
-            df = pd.read_csv(
-                csv_buffer,
-                skip_blank_lines=True,
-                encoding="utf-8",
-                header=7,  # fila 8 tiene cabeceras
-                skipinitialspace=True,
-            )
-        else:  # CSV directo
-            df = pd.read_csv(
-                file,
-                skip_blank_lines=True,
-                encoding="utf-8",
-                header=7,
-                skipinitialspace=True,
-            )
+            df = pd.read_csv(csv_buffer, skip_blank_lines=True, encoding="utf-8", header=7, skipinitialspace=True)
+        else:
+            df = pd.read_csv(file, skip_blank_lines=True, encoding="utf-8", header=7, skipinitialspace=True)
 
-        # Asignar categoría
+        # --- Categoría ---
         if "Categoría" not in df.columns:
             df["Categoría"] = validateCategory(file.name)
         else:
-            df["Categoría"] = df["Categoría"].apply(
-                lambda x: CATEGORIA_MAP.get(str(x).strip(), CATEGORIA_MAP["Intangible"])
-            )
+            df["Categoría"] = df["Categoría"].apply(lambda x: CATEGORIA_MAP.get(str(x).strip(), CATEGORIA_MAP["Intangible"]))
 
-        # columnas necesarias
+        # --- Limpieza ---
         desired_columns = [
-            "Inventario",
-            "Descripción",
-            "Marca",
-            "Valor",
-            "Fecha Recibido",
-            "Categoría",
-            "Ubicación",
-            "FUNCIONARIO QUE ENTREGA",
-            "FUNCIONARIO QUE RECIBE",
+            "Inventario", "Descripción", "Marca", "Valor", "Fecha Recibido", "Categoría",
+            "Ubicación", "FUNCIONARIO QUE ENTREGA", "FUNCIONARIO QUE RECIBE"
         ]
 
         df = df.dropna(subset=["Inventario"])
         df = df[df["Inventario"].astype(str).str.strip().str.isnumeric()]
 
-        # limpiar strings
         for col in ["Marca", "Descripción", "FUNCIONARIO QUE ENTREGA", "FUNCIONARIO QUE RECIBE"]:
             df[col] = df[col].astype(str).str.strip()
 
-        # normalizar fechas
         if "Fecha Recibido" in df.columns:
-            df["Fecha Recibido"] = pd.to_datetime(
-                df["Fecha Recibido"],
-                errors="coerce",
-                dayfirst=True,
-            ).fillna(pd.Timestamp("2000-01-01")).dt.strftime("%Y-%m-%d")
+            df["Fecha Recibido"] = pd.to_datetime(df["Fecha Recibido"], errors="coerce", dayfirst=True).fillna(pd.Timestamp("2000-01-01")).dt.strftime("%Y-%m-%d")
 
-        # limpiar valor ($, ,)
-        df["Valor"] = (
-            df["Valor"]
-            .astype(str)
-            .str.replace(r"[^\d.]", "", regex=True)
-        )
+        df["Valor"] = df["Valor"].astype(str).str.replace(r"[^\d.]", "", regex=True)
         df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce").fillna(0)
 
-        # renombrar columnas
         df = df[desired_columns]
         df.columns = [normalize_key(c) for c in df.columns]
-
         data_json = json.loads(df.to_json(orient="records", force_ascii=False))
 
-        not_found_ubicaciones = []
-        not_found_usuarios = []
+        not_found_ubicaciones, not_found_usuarios = [], []
 
-        # UPSERT en inventario_items
+        # --- UPSERT ---
         with transaction.atomic():
             with connection.cursor() as cursor:
-                # Mostrar lista de usuarios para debugging
                 mostrar_usuarios_debug(cursor)
-                
+
                 for item in data_json:
-                    # Buscar id de edificio según ubicacion
                     ubicacion_id = None
                     ubicacion_nombre = item.get("ubicacion")
                     if ubicacion_nombre:
-                        cursor.execute(
-                            "SELECT id FROM edificios WHERE LOWER(edificio) = LOWER(%s) LIMIT 1;",
-                            [ubicacion_nombre.strip()]
-                        )
+                        cursor.execute("SELECT id FROM edificios WHERE LOWER(edificio) = LOWER(%s) LIMIT 1;", [ubicacion_nombre.strip()])
                         row = cursor.fetchone()
                         if row:
                             ubicacion_id = row[0]
                         else:
                             not_found_ubicaciones.append(ubicacion_nombre.strip())
 
-                    # Buscar usuarios usando la función mejorada
                     entregado_por_id = get_usuario_id(cursor, item.get("funcionario_que_entrega"))
                     recibido_por_id = get_usuario_id(cursor, item.get("funcionario_que_recibe"))
 
-                    # Si no se encuentra el usuario que recibe, saltar este registro
                     if recibido_por_id is None:
                         print(f"DEBUG: Saltando registro por usuario receptor no encontrado: {item.get('funcionario_que_recibe')}")
                         continue
 
-                    # Siempre dejar escuela en NULL
                     escuela_id = 0
 
-                    # UPSERT
                     cursor.execute(
                         """
                         INSERT INTO inventario_items (
@@ -267,26 +304,16 @@ def importar_inventario(request):
                             escuela_id = EXCLUDED.escuela_id;
                         """,
                         [
-                            item.get("inventario"),
-                            item.get("descripcion"),
-                            item.get("marca"),
-                            item.get("valor"),
-                            item.get("fecha_recibido"),
-                            item.get("categoria"),
-                            ubicacion_id,
-                            entregado_por_id,
-                            recibido_por_id,
-                            escuela_id,  # siempre nulo
+                            item.get("inventario"), item.get("descripcion"), item.get("marca"),
+                            item.get("valor"), item.get("fecha_recibido"), item.get("categoria"),
+                            ubicacion_id, entregado_por_id, recibido_por_id, escuela_id,
                         ]
                     )
 
         return Response(
-            {
-                "status": "ok",
-                "insertados": len(data_json),
-                "ubicaciones_no_encontradas": list(set(not_found_ubicaciones)),
-                "usuarios_no_encontrados": list(set(not_found_usuarios)),
-            },
+            {"status": "ok", "insertados": len(data_json),
+             "ubicaciones_no_encontradas": list(set(not_found_ubicaciones)),
+             "usuarios_no_encontrados": list(set(not_found_usuarios))},
             status=status.HTTP_201_CREATED,
         )
 
@@ -294,31 +321,18 @@ def importar_inventario(request):
         return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-
+# ================== OBTENER INVENTARIO ==================
 @api_view(["GET"])
 @login_required_api
 def obtener_inventario_usuario(request):
-    """
-    Obtiene los items de inventario subidos por el usuario logueado
-    """
     try:
-        # Obtener el ID del usuario del token JWT
         user_id = request.user_id
-        
         with connection.cursor() as cursor:
-            # Consulta para obtener los items del inventario del usuario
             cursor.execute("""
                 SELECT 
-                    ii.inventario,
-                    ii.descripcion,
-                    ii.marca,
-                    ii.valor,
-                    ii.fecha_recibido,
-                    c.nombre as categoria,
-                    e.edificio as ubicacion,
-                    ue.nombre as entregado_por,
-                    ur.nombre as recibido_por,
-                    esc.nombre as escuela
+                    ii.inventario, ii.descripcion, ii.marca, ii.valor, ii.fecha_recibido,
+                    c.nombre as categoria, e.edificio as ubicacion,
+                    ue.nombre as entregado_por, ur.nombre as recibido_por, esc.nombre as escuela
                 FROM inventario_items ii
                 LEFT JOIN categorias c ON ii.categoria_id = c.id
                 LEFT JOIN edificios e ON ii.ubicacion_id = e.id
@@ -329,17 +343,9 @@ def obtener_inventario_usuario(request):
                 ORDER BY ii.fecha_recibido DESC
             """, [user_id])
 
-            
             columns = [col[0] for col in cursor.description]
             items = [dict(zip(columns, row)) for row in cursor.fetchall()]
-        
-        return Response({
-            "success": True,
-            "total_items": len(items),
-            "items": items
-        }, status=status.HTTP_200_OK)
-        
+
+        return Response({"success": True, "total_items": len(items), "items": items}, status=status.HTTP_200_OK)
     except Exception as e:
-        return Response({
-            "error": f"Error al obtener inventario: {str(e)}"
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response({"error": f"Error al obtener inventario: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
