@@ -1,11 +1,14 @@
 import json
 import hashlib
 import re
+import jwt
+import datetime
 from functools import wraps
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 from django.db import connection
+from django.conf import settings
 
 # =============================
 # Funciones auxiliares
@@ -19,41 +22,68 @@ def validate_email(email):
     pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
     return re.match(pattern, email) is not None
 
+def generate_jwt_token(user_id, user_data):
+    """Genera un token JWT para el usuario"""
+    payload = {
+        'user_id': user_id,
+        'nombre': user_data[1],
+        'email': user_data[2],
+        'rol': user_data[3],
+        'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=24),  # 24 horas
+        'iat': datetime.datetime.utcnow()
+    }
+    return jwt.encode(payload, settings.SECRET_KEY, algorithm='HS256')
+
+def verify_jwt_token(token):
+    """Verifica y decodifica un token JWT"""
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=['HS256'])
+        return payload
+    except jwt.ExpiredSignatureError:
+        return None
+    except jwt.InvalidTokenError:
+        return None
+
 def login_required_api(view_func):
-    """Decorador para endpoints que requieren sesión activa"""
+    """Decorador para endpoints que requieren token JWT válido"""
     @wraps(view_func)
     def wrapper(request, *args, **kwargs):
-        user_id = request.session.get('user_id')
-        if not user_id:
-            return JsonResponse({'error': 'Autenticación requerida'}, status=401)
-
+        # Obtener el token del header Authorization
+        auth_header = request.META.get('HTTP_AUTHORIZATION')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return JsonResponse({'error': 'Token de autorización requerido'}, status=401)
+        
+        token = auth_header.split(' ')[1]
+        payload = verify_jwt_token(token)
+        
+        if not payload:
+            return JsonResponse({'error': 'Token inválido o expirado'}, status=401)
+        
         try:
             with connection.cursor() as cursor:
                 cursor.execute("""
                     SELECT id, nombre, email, rol, activo 
                     FROM usuarios 
                     WHERE id = %s AND activo = true
-                """, (user_id,))
+                """, (payload['user_id'],))
                 user = cursor.fetchone()
 
             if not user:
-                request.session.flush()
-                return JsonResponse({'error': 'Sesión inválida'}, status=401)
+                return JsonResponse({'error': 'Usuario no encontrado o inactivo'}, status=401)
 
             request.user_data = user
+            request.user_id = payload['user_id']
         except Exception as e:
             return JsonResponse({'error': 'Error de base de datos', 'message': str(e)}, status=500)
 
         return view_func(request, *args, **kwargs)
     return wrapper
 
-# =============================
-# Vistas
-# =============================
+
 @csrf_exempt
 @require_http_methods(["POST"])
 def login_view(request):
-    """Login usando raw SQL"""
+    """Login usando JWT tokens"""
     try:
         data = json.loads(request.body)
         codigo = data.get('codigo', '').strip().upper()
@@ -76,18 +106,15 @@ def login_view(request):
         if not user:
             return JsonResponse({'error': 'Credenciales inválidas'}, status=401)
 
-        # Crear sesión
-        request.session['user_id'] = user[0]
-        request.session['user_name'] = user[1]
-        request.session['user_email'] = user[2]
-        request.session['user_role'] = user[3]
-        request.session.set_expiry(86400)  # 24 horas
+        # Generar token JWT
+        token = generate_jwt_token(user[0], user)
 
         return JsonResponse({
             'success': True,
+            'token': token,
             'user': {
                 'id': user[0],
-                'codigo': user[1],  # <-- Cambié 'nombre' por 'codigo' aquí
+                'codigo': codigo,
                 'nombre': user[1],
                 'email': user[2],
                 'rol': user[3],
@@ -100,24 +127,16 @@ def login_view(request):
     except Exception as e:
         return JsonResponse({'error': 'Error interno', 'message': str(e)}, status=500)
 
+
 @csrf_exempt
 @require_http_methods(["POST"])
 def logout_view(request):
-    """Vista de logout que cierra la sesión"""
-    try:
-        # Limpiar la sesión
-        request.session.flush()
-        
-        return JsonResponse({
-            'success': True,
-            'message': 'Sesión cerrada exitosamente'
-        })
-        
-    except Exception as e:
-        return JsonResponse({
-            'error': 'Error al cerrar sesión',
-            'message': str(e)
-        }, status=500)
+    """Vista de logout - con JWT no necesitamos hacer nada en el servidor"""
+    return JsonResponse({
+        'success': True,
+        'message': 'Logout exitoso. El token debe ser eliminado del cliente.'
+    })
+
 
 @login_required_api
 @require_http_methods(["GET"])
@@ -131,7 +150,7 @@ def profile_view(request):
                 FROM usuarios u
                 LEFT JOIN escuelas e ON u.escuela_id = e.id
                 WHERE u.id = %s
-            """, (request.session['user_id'],))
+            """, (request.user_id,))
             user = cursor.fetchone()
 
         if not user:
@@ -155,6 +174,8 @@ def profile_view(request):
 
     except Exception as e:
         return JsonResponse({'error': 'Error interno', 'message': str(e)}, status=500)
+
+
 
 @csrf_exempt
 @require_http_methods(["POST"])

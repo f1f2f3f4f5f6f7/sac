@@ -6,7 +6,7 @@ from rest_framework.decorators import api_view, parser_classes
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.response import Response
 from rest_framework import status
-
+from accounts.views import login_required_api  # Importar el decorador de autenticación
 
 def normalize_key(key: str) -> str:
     return (
@@ -292,3 +292,55 @@ def importar_inventario(request):
 
     except Exception as e:
         return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
+@api_view(["GET"])
+@login_required_api
+def obtener_inventario_usuario(request):
+    """
+    Obtiene los items de inventario subidos por el usuario logueado
+    """
+    try:
+        # Obtener el ID del usuario del token JWT
+        user_id = request.user_id
+        
+        with connection.cursor() as cursor:
+            # Consulta para obtener los items del inventario del usuario
+            cursor.execute("""
+                SELECT 
+                    ii.inventario,
+                    ii.descripcion,
+                    ii.marca,
+                    ii.valor,
+                    ii.fecha_recibido,
+                    c.nombre as categoria,
+                    e.edificio || ' - ' || s.salones as ubicacion,
+                    ue.nombre as entregado_por,
+                    ur.nombre as recibido_por,
+                    esc.nombre as escuela
+                FROM inventario_items ii
+                LEFT JOIN categorias c ON ii.categoria_id = c.id
+                LEFT JOIN salones s ON ii.ubicacion_id = s.id
+                LEFT JOIN edificios e ON s.id_edificio = e.id
+                LEFT JOIN usuarios ue ON ii.entregado_por_id = ue.id
+                LEFT JOIN usuarios ur ON ii.recibido_por_id = ur.id
+                LEFT JOIN escuelas esc ON ii.escuela_id = esc.id
+                WHERE ii.recibido_por_id = %s
+                ORDER BY ii.fecha_recibido DESC
+            """, [user_id])
+
+            
+            columns = [col[0] for col in cursor.description]
+            items = [dict(zip(columns, row)) for row in cursor.fetchall()]
+        
+        return Response({
+            "success": True,
+            "total_items": len(items),
+            "items": items
+        }, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        return Response({
+            "error": f"Error al obtener inventario: {str(e)}"
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
