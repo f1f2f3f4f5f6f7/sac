@@ -315,14 +315,13 @@ def obtener_inventario_usuario(request):
                     ii.valor,
                     ii.fecha_recibido,
                     c.nombre as categoria,
-                    e.edificio || ' - ' || s.salones as ubicacion,
+                    e.edificio as ubicacion,
                     ue.nombre as entregado_por,
                     ur.nombre as recibido_por,
                     esc.nombre as escuela
                 FROM inventario_items ii
                 LEFT JOIN categorias c ON ii.categoria_id = c.id
-                LEFT JOIN salones s ON ii.ubicacion_id = s.id
-                LEFT JOIN edificios e ON s.id_edificio = e.id
+                LEFT JOIN edificios e ON ii.ubicacion_id = e.id
                 LEFT JOIN usuarios ue ON ii.entregado_por_id = ue.id
                 LEFT JOIN usuarios ur ON ii.recibido_por_id = ur.id
                 LEFT JOIN escuelas esc ON ii.escuela_id = esc.id
