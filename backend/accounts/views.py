@@ -175,6 +175,45 @@ def profile_view(request):
     except Exception as e:
         return JsonResponse({'error': 'Error interno', 'message': str(e)}, status=500)
 
+@login_required_api
+@require_http_methods(["GET"])
+def users_list_view(request):
+    """Listar todos los usuarios del sistema"""
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT u.id, u.codigo, u.nombre, u.email, u.rol, u.activo,
+                       e.nombre, e.id
+                FROM usuarios u
+                LEFT JOIN escuelas e ON u.escuela_id = e.id
+                ORDER BY u.nombre ASC
+            """)
+            users = cursor.fetchall()
+
+        users_list = []
+        for user in users:
+            users_list.append({
+                'id': user[0],
+                'codigo': user[1],
+                'nombre': user[2],
+                'email': user[3],
+                'rol': user[4],
+                'activo': user[5],
+                'escuela': {
+                    'id': user[7],
+                    'nombre': user[6]
+                } if user[6] else None
+            })
+
+        return JsonResponse({
+            'success': True,
+            'users': users_list,
+            'total': len(users_list)
+        })
+
+    except Exception as e:
+        return JsonResponse({'error': 'Error interno', 'message': str(e)}, status=500)
+
 
 
 @csrf_exempt
