@@ -258,7 +258,8 @@ def importar_inventario(request):
         data_json = json.loads(df.to_json(orient="records", force_ascii=False))
 
         not_found_ubicaciones, not_found_usuarios = [], []
-
+        nuevos, repetidos = [], [] 
+        nuevos_count = []
         # --- UPSERT ---
         with transaction.atomic():
             with connection.cursor() as cursor:
@@ -286,22 +287,26 @@ def importar_inventario(request):
 
                     cursor.execute(
                         """
-                        INSERT INTO inventario_items (
-                            inventario, descripcion, marca, valor, fecha_recibido,
-                            categoria_id, ubicacion_id, entregado_por_id, recibido_por_id,
-                            escuela_id
+                        WITH upsert AS (
+                            INSERT INTO inventario_items (
+                                inventario, descripcion, marca, valor, fecha_recibido,
+                                categoria_id, ubicacion_id, entregado_por_id, recibido_por_id,
+                                escuela_id
+                            )
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            ON CONFLICT (inventario) DO UPDATE SET
+                                descripcion = EXCLUDED.descripcion,
+                                marca = EXCLUDED.marca,
+                                valor = EXCLUDED.valor,
+                                fecha_recibido = EXCLUDED.fecha_recibido,
+                                categoria_id = EXCLUDED.categoria_id,
+                                ubicacion_id = EXCLUDED.ubicacion_id,
+                                entregado_por_id = EXCLUDED.entregado_por_id,
+                                recibido_por_id = EXCLUDED.recibido_por_id,
+                                escuela_id = EXCLUDED.escuela_id
+                            RETURNING xmax
                         )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        ON CONFLICT (inventario) DO UPDATE SET
-                            descripcion = EXCLUDED.descripcion,
-                            marca = EXCLUDED.marca,
-                            valor = EXCLUDED.valor,
-                            fecha_recibido = EXCLUDED.fecha_recibido,
-                            categoria_id = EXCLUDED.categoria_id,
-                            ubicacion_id = EXCLUDED.ubicacion_id,
-                            entregado_por_id = EXCLUDED.entregado_por_id,
-                            recibido_por_id = EXCLUDED.recibido_por_id,
-                            escuela_id = EXCLUDED.escuela_id;
+                        SELECT CASE WHEN xmax = 0 THEN TRUE ELSE FALSE END AS inserted FROM upsert;
                         """,
                         [
                             item.get("inventario"), item.get("descripcion"), item.get("marca"),
@@ -309,9 +314,18 @@ def importar_inventario(request):
                             ubicacion_id, entregado_por_id, recibido_por_id, escuela_id,
                         ]
                     )
+                    inserted_flag = cursor.fetchone()[0]
+                    if inserted_flag:
+                        nuevos.append(item)
+                        nuevos_count.append(item.get("inventario"))
+                    else:
+                        repetidos.append(item.get("inventario"))
+
 
         return Response(
-            {"status": "ok", "insertados": len(data_json),
+            {"status": "ok", "insertados": len(nuevos_count),
+            "nuevos": nuevos,
+             "repetidos": len(repetidos),
              "ubicaciones_no_encontradas": list(set(not_found_ubicaciones)),
              "usuarios_no_encontrados": list(set(not_found_usuarios))},
             status=status.HTTP_201_CREATED,
