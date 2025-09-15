@@ -6,3 +6,7 @@ sqlparse==0.5.3
 psycopg2==2.9.10
 pandas==2.3.2
 Pillow==11.3.0
+openpyxl==3.1.5
+xlrd==2.0.1
+PyJWT>=2.9.0
+rapidfuzz==3.9.7
