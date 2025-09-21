@@ -10,6 +10,7 @@ from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.response import Response
 from rest_framework import status
 from accounts.views import login_required_api  # Importar el decorador de autenticación
+from psycopg2.extras import execute_values
 
 
 def normalize_key(key: str) -> str:
@@ -114,78 +115,103 @@ CATEGORIA_MAP = {
 }
 
 
-# ================== BUSQUEDA DE USUARIOS ==================
-def get_usuario_id(cursor, nombre):
-    if not nombre or str(nombre).lower() == "nan":
-        return None
-
-    nombre_norm = nombre.strip()
-    print(f"DEBUG: Buscando usuario: '{nombre_norm}'")
-
-    # 1. Directo
-    cursor.execute(
-        "SELECT id, nombre FROM usuarios WHERE LOWER(nombre) = LOWER(%s) LIMIT 1;",
-        [nombre_norm],
-    )
-    row = cursor.fetchone()
-    if row:
-        print(f"DEBUG: Usuario encontrado directo - ID: {row[0]}, Nombre DB: '{row[1]}'")
-        return row[0]
-
-    # 2. Invertido
-    invertido = " ".join(nombre_norm.split()[::-1])
-    cursor.execute(
-        "SELECT id, nombre FROM usuarios WHERE LOWER(nombre) = LOWER(%s) LIMIT 1;",
-        [invertido],
-    )
-    row = cursor.fetchone()
-    if row:
-        print(f"DEBUG: Usuario encontrado invertido - ID: {row[0]}, Nombre DB: '{row[1]}'")
-        return row[0]
-
-    # 3. LIKE
-    palabras = nombre_norm.split()
-    condiciones = []
-    params = []
-    for palabra in palabras:
-        if len(palabra) > 2:
-            condiciones.append("LOWER(nombre) LIKE LOWER(%s)")
-            params.append(f"%{palabra}%")
-    if condiciones:
-        query = "SELECT id, nombre FROM usuarios WHERE " + " AND ".join(condiciones) + " LIMIT 10;"
-        cursor.execute(query, params)
-        similares = cursor.fetchall()
-        if similares:
-            print(f"DEBUG: Usuarios similares encontrados (LIKE): {similares}")
-            return similares[0][0]
-
-    # 4. Fuzzy (último recurso)
-    cursor.execute("SELECT id, nombre FROM usuarios")
-    todos = cursor.fetchall()
-
-    mejor_match = None
-    mejor_score = 0
-    for user_id, nombre_db in todos:
-        valido, score, _ = comparar_nombres_completos(nombre_norm, nombre_db)
-        if valido and score > mejor_score:
-            mejor_match = user_id
-            mejor_score = score
-
-    if mejor_match:
-        print(f"DEBUG: Usuario encontrado por FUZZY - ID: {mejor_match}, Score: {mejor_score}")
-        return mejor_match
-
-    print(f"DEBUG: Usuario NO encontrado para: '{nombre_norm}'")
-    return 0
-
-
-def mostrar_usuarios_debug(cursor):
-    cursor.execute("SELECT id, nombre FROM usuarios ORDER BY nombre LIMIT 20;")
-    usuarios = cursor.fetchall()
-    print("DEBUG: === LISTA DE USUARIOS EN BASE DE DATOS ===")
-    for user_id, nombre in usuarios:
-        print(f"DEBUG: ID: {user_id} - Nombre: '{nombre}'")
-    print("DEBUG: === FIN LISTA USUARIOS ===")
+# ================== CACHE INTELIGENTE DE USUARIOS ==================
+class UsuarioCache:
+    def __init__(self, cursor):
+        self.cursor = cursor
+        self.cache_directo = {}  # nombre -> id
+        self.cache_invertido = {}  # nombre_invertido -> id
+        self.cache_palabras = {}  # palabra -> lista de (id, nombre_completo)
+        self.todos_usuarios = []  # lista de (id, nombre) para fuzzy
+        self._construir_cache()
+    
+    def _construir_cache(self):
+        """Construye todos los caches de una vez"""
+        print("DEBUG: Construyendo cache de usuarios...")
+        
+        # Obtener todos los usuarios de una vez
+        self.cursor.execute("SELECT id, nombre FROM usuarios")
+        todos = self.cursor.fetchall()
+        
+        for user_id, nombre in todos:
+            nombre_norm = nombre.strip()
+            self.todos_usuarios.append((user_id, nombre_norm))
+            
+            # Cache directo
+            self.cache_directo[nombre_norm.lower()] = user_id
+            
+            # Cache invertido
+            invertido = " ".join(nombre_norm.split()[::-1])
+            self.cache_invertido[invertido.lower()] = user_id
+            
+            # Cache por palabras
+            palabras = nombre_norm.split()
+            for palabra in palabras:
+                if len(palabra) > 2:
+                    palabra_key = palabra.lower()
+                    if palabra_key not in self.cache_palabras:
+                        self.cache_palabras[palabra_key] = []
+                    self.cache_palabras[palabra_key].append((user_id, nombre_norm))
+        
+        print(f"DEBUG: Cache construido - {len(self.todos_usuarios)} usuarios")
+    
+    def buscar_usuario(self, nombre):
+        """Búsqueda optimizada usando caches en memoria"""
+        if not nombre or str(nombre).lower() == "nan":
+            return None
+        
+        nombre_norm = nombre.strip()
+        print(f"DEBUG: Buscando usuario: '{nombre_norm}'")
+        
+        # 1. Búsqueda directa
+        user_id = self.cache_directo.get(nombre_norm.lower())
+        if user_id:
+            print(f"DEBUG: Usuario encontrado directo - ID: {user_id}")
+            return user_id
+        
+        # 2. Búsqueda invertida
+        invertido = " ".join(nombre_norm.split()[::-1])
+        user_id = self.cache_invertido.get(invertido.lower())
+        if user_id:
+            print(f"DEBUG: Usuario encontrado invertido - ID: {user_id}")
+            return user_id
+        
+        # 3. Búsqueda por palabras (LIKE)
+        palabras = nombre_norm.split()
+        candidatos = set()
+        
+        for palabra in palabras:
+            if len(palabra) > 2:
+                palabra_key = palabra.lower()
+                if palabra_key in self.cache_palabras:
+                    for user_id, nombre_db in self.cache_palabras[palabra_key]:
+                        # Verificar que todas las palabras estén en el nombre de la DB
+                        nombre_db_lower = nombre_db.lower()
+                        if all(p.lower() in nombre_db_lower for p in palabras):
+                            candidatos.add((user_id, nombre_db))
+        
+        if candidatos:
+            # Tomar el primer candidato (más simple que fuzzy para LIKE)
+            user_id, nombre_db = list(candidatos)[0]
+            print(f"DEBUG: Usuario encontrado por palabras - ID: {user_id}, Nombre: '{nombre_db}'")
+            return user_id
+        
+        # 4. Fuzzy matching (último recurso)
+        mejor_match = None
+        mejor_score = 0
+        
+        for user_id, nombre_db in self.todos_usuarios:
+            valido, score, _ = comparar_nombres_completos(nombre_norm, nombre_db)
+            if valido and score > mejor_score:
+                mejor_match = user_id
+                mejor_score = score
+        
+        if mejor_match:
+            print(f"DEBUG: Usuario encontrado por FUZZY - ID: {mejor_match}, Score: {mejor_score}")
+            return mejor_match
+        
+        print(f"DEBUG: Usuario NO encontrado para: '{nombre_norm}'")
+        return 0
 
 
 # ================== VALIDACION CATEGORÍA ==================
@@ -201,9 +227,11 @@ def validateCategory(nombreArchivo):
 # ================== IMPORTAR INVENTARIO ==================
 @api_view(["POST"])
 @parser_classes([MultiPartParser, FormParser])
+@login_required_api  # Agregar el decorador de autenticación
 def importar_inventario(request):
     """
-    Recibe un Excel/CSV, limpia los datos y hace UPSERT en la tabla inventario_items.
+    Recibe un Excel/CSV, limpia los datos y hace UPSERT en la tabla inventario_items (optimizado).
+    Valida que el usuario autenticado sea el mismo que aparece en la columna 'recibido por'.
     """
     file = request.FILES.get("file")
     if not file:
@@ -213,7 +241,7 @@ def importar_inventario(request):
         )
 
     try:
-        # --- Lectura del archivo ---
+        # --- Lectura del archivo (usando el método que funciona) ---
         if file.name.endswith(".xlsx"):
             read_file = pd.read_excel(file, engine="openpyxl")
             csv_buffer = io.StringIO()
@@ -233,7 +261,9 @@ def importar_inventario(request):
         if "Categoría" not in df.columns:
             df["Categoría"] = validateCategory(file.name)
         else:
-            df["Categoría"] = df["Categoría"].apply(lambda x: CATEGORIA_MAP.get(str(x).strip(), CATEGORIA_MAP["Intangible"]))
+            df["Categoría"] = df["Categoría"].apply(
+                lambda x: CATEGORIA_MAP.get(str(x).strip(), CATEGORIA_MAP["Intangible"])
+            )
 
         # --- Limpieza ---
         desired_columns = [
@@ -248,7 +278,11 @@ def importar_inventario(request):
             df[col] = df[col].astype(str).str.strip()
 
         if "Fecha Recibido" in df.columns:
-            df["Fecha Recibido"] = pd.to_datetime(df["Fecha Recibido"], errors="coerce", dayfirst=True).fillna(pd.Timestamp("2000-01-01")).dt.strftime("%Y-%m-%d")
+            df["Fecha Recibido"] = (
+                pd.to_datetime(df["Fecha Recibido"], errors="coerce", dayfirst=True)
+                .fillna(pd.Timestamp("2000-01-01"))
+                .dt.strftime("%Y-%m-%d")
+            )
 
         df["Valor"] = df["Valor"].astype(str).str.replace(r"[^\d.]", "", regex=True)
         df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce").fillna(0)
@@ -257,77 +291,133 @@ def importar_inventario(request):
         df.columns = [normalize_key(c) for c in df.columns]
         data_json = json.loads(df.to_json(orient="records", force_ascii=False))
 
+        # === VALIDACIÓN DE USUARIO AUTENTICADO ===
+        with connection.cursor() as cursor:
+            # Obtener el nombre del usuario autenticado
+            cursor.execute("SELECT nombre FROM usuarios WHERE id = %s", [request.user_id])
+            usuario_autenticado = cursor.fetchone()
+            
+            if not usuario_autenticado:
+                return Response(
+                    {"error": "Usuario no encontrado en la base de datos."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            
+            nombre_usuario_autenticado = usuario_autenticado[0]
+            print(f"DEBUG: Usuario autenticado: '{nombre_usuario_autenticado}'")
+            
+            # Crear cache de usuarios para validación
+            usuario_cache = UsuarioCache(cursor)
+            
+            # Validar que todos los registros tengan el mismo usuario en "recibido por"
+            # Usar IDs de usuario en lugar de nombres para la comparación
+            usuarios_recibidos_ids = set()
+            usuarios_recibidos_nombres = set()
+            
+            for item in data_json:
+                recibido_por = item.get("funcionario_que_recibe", "").strip()
+                if recibido_por:
+                    usuarios_recibidos_nombres.add(recibido_por)
+                    # Buscar el ID del usuario usando la misma lógica de búsqueda
+                    usuario_id = usuario_cache.buscar_usuario(recibido_por)
+                    if usuario_id and usuario_id != 0:
+                        usuarios_recibidos_ids.add(usuario_id)
+            
+            # Verificar que solo haya un usuario único en "recibido por" (por ID)
+            if len(usuarios_recibidos_ids) > 1:
+                return Response(
+                    {
+                        "error": "Todos los registros deben tener el mismo usuario en la columna 'FUNCIONARIO QUE RECIBE'.",
+                        "usuarios_encontrados": list(usuarios_recibidos_nombres)
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            
+            # Verificar que el usuario en "recibido por" coincida con el usuario autenticado
+            if usuarios_recibidos_ids:
+                usuario_id_en_archivo = list(usuarios_recibidos_ids)[0]
+                
+                if usuario_id_en_archivo != request.user_id:
+                    # Obtener el nombre del usuario encontrado en el archivo para el mensaje de error
+                    cursor.execute("SELECT nombre FROM usuarios WHERE id = %s", [usuario_id_en_archivo])
+                    usuario_encontrado = cursor.fetchone()
+                    nombre_usuario_encontrado = usuario_encontrado[0] if usuario_encontrado else "Usuario desconocido"
+                    
+                    return Response(
+                        {
+                            "error": f"El usuario en el archivo ('{nombre_usuario_encontrado}') no coincide con tu usuario autenticado ('{nombre_usuario_autenticado}').",
+                            "usuario_archivo": nombre_usuario_encontrado,
+                            "usuario_autenticado": nombre_usuario_autenticado
+                        },
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+
         not_found_ubicaciones, not_found_usuarios = [], []
-        nuevos, repetidos = [], [] 
-        nuevos_count = []
-        # --- UPSERT ---
+        nuevos, repetidos = [], []
+
         with transaction.atomic():
             with connection.cursor() as cursor:
-                mostrar_usuarios_debug(cursor)
+                # === Cache de edificios ===
+                cursor.execute("SELECT id, LOWER(edificio) FROM edificios")
+                edificios_map = {nombre.strip().lower(): eid for eid, nombre in cursor.fetchall()}
 
+                # === Cache inteligente de usuarios ===
+                usuario_cache = UsuarioCache(cursor)
+
+                # === Preparar registros para batch insert ===
+                records = []
                 for item in data_json:
+                    # Ubicación
                     ubicacion_id = None
-                    ubicacion_nombre = item.get("ubicacion")
-                    if ubicacion_nombre:
-                        cursor.execute("SELECT id FROM edificios WHERE LOWER(edificio) = LOWER(%s) LIMIT 1;", [ubicacion_nombre.strip()])
-                        row = cursor.fetchone()
-                        if row:
-                            ubicacion_id = row[0]
-                        else:
-                            not_found_ubicaciones.append(ubicacion_nombre.strip())
+                    if item.get("ubicacion"):
+                        ubicacion_id = edificios_map.get(item["ubicacion"].strip().lower())
+                        if not ubicacion_id:
+                            not_found_ubicaciones.append(item["ubicacion"].strip())
 
-                    entregado_por_id = get_usuario_id(cursor, item.get("funcionario_que_entrega"))
-                    recibido_por_id = get_usuario_id(cursor, item.get("funcionario_que_recibe"))
+                    # Usuarios - usar cache optimizado
+                    entregado_por_id = usuario_cache.buscar_usuario(item.get("funcionario_que_entrega", ""))
+                    recibido_por_id = usuario_cache.buscar_usuario(item.get("funcionario_que_recibe", ""))
 
-                    if recibido_por_id is None:
-                        print(f"DEBUG: Saltando registro por usuario receptor no encontrado: {item.get('funcionario_que_recibe')}")
+                    if recibido_por_id is None or recibido_por_id == 0:  # si no existe, marcar
+                        not_found_usuarios.append(item.get("funcionario_que_recibe"))
                         continue
 
-                    escuela_id = 0
+                    # Agregar al batch
+                    records.append((
+                        item.get("inventario"), item.get("descripcion"), item.get("marca"),
+                        item.get("valor"), item.get("fecha_recibido"), item.get("categoria"),
+                        ubicacion_id, entregado_por_id, recibido_por_id, 0  # escuela_id
+                    ))
 
-                    cursor.execute(
-                        """
-                        WITH upsert AS (
-                            INSERT INTO inventario_items (
-                                inventario, descripcion, marca, valor, fecha_recibido,
-                                categoria_id, ubicacion_id, entregado_por_id, recibido_por_id,
-                                escuela_id
-                            )
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                            ON CONFLICT (inventario) DO UPDATE SET
-                                descripcion = EXCLUDED.descripcion,
-                                marca = EXCLUDED.marca,
-                                valor = EXCLUDED.valor,
-                                fecha_recibido = EXCLUDED.fecha_recibido,
-                                categoria_id = EXCLUDED.categoria_id,
-                                ubicacion_id = EXCLUDED.ubicacion_id,
-                                entregado_por_id = EXCLUDED.entregado_por_id,
-                                recibido_por_id = EXCLUDED.recibido_por_id,
-                                escuela_id = EXCLUDED.escuela_id
-                            RETURNING xmax
+                # === Batch UPSERT ===
+                if records:
+                    execute_values(cursor, """
+                        INSERT INTO inventario_items (
+                            inventario, descripcion, marca, valor, fecha_recibido,
+                            categoria_id, ubicacion_id, entregado_por_id, recibido_por_id, escuela_id
                         )
-                        SELECT CASE WHEN xmax = 0 THEN TRUE ELSE FALSE END AS inserted FROM upsert;
+                        VALUES %s
+                        ON CONFLICT (inventario) DO UPDATE SET
+                            descripcion = EXCLUDED.descripcion,
+                            marca = EXCLUDED.marca,
+                            valor = EXCLUDED.valor,
+                            fecha_recibido = EXCLUDED.fecha_recibido,
+                            categoria_id = EXCLUDED.categoria_id,
+                            ubicacion_id = EXCLUDED.ubicacion_id,
+                            entregado_por_id = EXCLUDED.entregado_por_id,
+                            recibido_por_id = EXCLUDED.recibido_por_id,
+                            escuela_id = EXCLUDED.escuela_id
                         """,
-                        [
-                            item.get("inventario"), item.get("descripcion"), item.get("marca"),
-                            item.get("valor"), item.get("fecha_recibido"), item.get("categoria"),
-                            ubicacion_id, entregado_por_id, recibido_por_id, escuela_id,
-                        ]
+                        records
                     )
-                    inserted_flag = cursor.fetchone()[0]
-                    if inserted_flag:
-                        nuevos.append(item)
-                        nuevos_count.append(item.get("inventario"))
-                    else:
-                        repetidos.append(item.get("inventario"))
-
 
         return Response(
-            {"status": "ok", "insertados": len(nuevos_count),
-            "nuevos": nuevos,
-             "repetidos": len(repetidos),
-             "ubicaciones_no_encontradas": list(set(not_found_ubicaciones)),
-             "usuarios_no_encontrados": list(set(not_found_usuarios))},
+            {
+                "status": "ok",
+                "procesados": len(records),
+                "ubicaciones_no_encontradas": list(set(not_found_ubicaciones)),
+                "usuarios_no_encontrados": list(set(not_found_usuarios))
+            },
             status=status.HTTP_201_CREATED,
         )
 
