@@ -107,3 +107,19 @@ REST_FRAMEWORK = {
     "UNAUTHENTICATED_USER": None,          # 👈 clave: evita crear AnonymousUser
     "UNAUTHENTICATED_TOKEN": None,
 }
+
+# Agregar estas configuraciones al final del archivo
+
+# Configuración para archivos de imágenes
+MEDIA_ROOT = BASE_DIR / 'media'
+MEDIA_URL = '/media/'
+
+# Configuración para servir archivos estáticos
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+STATICFILES_DIRS = [
+    BASE_DIR / 'static',
+]
+
+import os
+os.makedirs(MEDIA_ROOT / 'inventario_images', exist_ok=True)
+
