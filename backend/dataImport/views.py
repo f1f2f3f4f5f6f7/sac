@@ -1,6 +1,7 @@
 import io
 import json
 import pandas as pd
+import datetime
 import unicodedata
 import re
 import os
@@ -31,6 +32,81 @@ def normalize_key(key: str) -> str:
         .replace("á", "a")
     )
 
+
+# ================== FECHAS ==================
+def _parse_fecha_valor(valor):
+    """Intenta parsear un valor de fecha desde múltiples formatos:
+    - Cadenas como 9/6/2019, 09-06-2019, 2019/06/09, etc.
+    - Seriales de Excel (número de días desde 1899-12-30)
+    Retorna pd.Timestamp o pd.NaT.
+    """
+    try:
+        if valor is None:
+            return pd.NaT
+
+        # Si ya es fecha de pandas
+        if isinstance(valor, (pd.Timestamp, datetime.date, datetime.datetime)):
+            return pd.to_datetime(valor, errors="coerce")
+
+        # Si es numérico, intentar como serial de Excel
+        if isinstance(valor, (int, float)):
+            # Rango razonable para serial de Excel
+            if 1000 <= float(valor) <= 60000:
+                base = pd.Timestamp("1899-12-30")
+                try:
+                    return base + pd.to_timedelta(int(valor), unit="D")
+                except Exception:
+                    pass
+            # Si no, intentar como epoch seconds (menos probable)
+            try:
+                ts = pd.to_datetime(valor, unit="s", errors="coerce")
+                if pd.notna(ts):
+                    return ts
+            except Exception:
+                pass
+
+        # Si es string, limpiar y probar múltiples estrategias
+        s = str(valor).strip()
+        if not s:
+            return pd.NaT
+
+        # Reemplazar separadores comunes
+        s_norm = s.replace("\\", "/").replace("-", "/").replace(".", "/")
+
+        # Intento 1: dayfirst=True (formato latino: D/M/Y)
+        ts = pd.to_datetime(s_norm, dayfirst=True, errors="coerce")
+        if pd.notna(ts):
+            return ts
+
+        # Intento 2: dayfirst=False (M/D/Y)
+        ts = pd.to_datetime(s_norm, dayfirst=False, errors="coerce")
+        if pd.notna(ts):
+            return ts
+
+        # Intento 3: formatos explícitos comunes
+        formatos = [
+            "%d/%m/%Y", "%d/%m/%y", "%m/%d/%Y", "%m/%d/%y",
+            "%Y/%m/%d", "%Y-%m-%d",
+        ]
+        for fmt in formatos:
+            try:
+                return pd.to_datetime(datetime.datetime.strptime(s_norm, fmt))
+            except Exception:
+                continue
+
+        return pd.NaT
+    except Exception:
+        return pd.NaT
+
+def normalizar_columna_fecha_yyyy_mm_dd(serie: pd.Series) -> pd.Series:
+    """Normaliza una Serie de fechas a formato YYYY-MM-DD con fallback a 2000-01-01."""
+    # Aplicar parser robusto elemento a elemento
+    fechas = serie.apply(_parse_fecha_valor)
+    # Reemplazar NaT por fecha por defecto
+    fechas = fechas.fillna(pd.Timestamp("2000-01-01"))
+    # Asegurar tipo datetime y formatear
+    fechas = pd.to_datetime(fechas, errors="coerce").dt.strftime("%Y-%m-%d")
+    return fechas
 
 # ================== FUNCIONES DE IMÁGENES ==================
 # Función para extraer imágenes del Excel
@@ -105,6 +181,63 @@ def extraer_imagenes_excel_avanzado(file_path, inventario_numero, row_number=Non
     except Exception as e:
         print(f"Error extrayendo imagen avanzada para inventario {inventario_numero}: {str(e)}")
         return None
+
+# ================== FUNCIONES DE ubicaciones ==================
+
+# Cache de edificios con palabras clave
+edificios_keywords = {
+    "auditorio luis a. calvo": 1,
+    "administracion 1": 2,
+    "administracion 3": 3,
+    "teatrino jose antonio galan": 4,
+    "administracion 2": 5,
+    "bienestar estudiantil": 6,
+    "casona la perla": 7,
+    "ciencias humanas 2": 8,
+    "ingenieria mecanica": 9,
+    "auditorio luis eduardo lobo c.": 10,
+    "biblioteca": 11,
+    "instituto de lenguas": 12,
+    "ingenieria industrial": 13,
+    "laboratorio biologia vegetal": 14,
+    "laboratorios livianos": 15,
+    "camilo torres": 16,
+    "centic": 17,
+    "uisalud": 18,
+    "federico mamitza bayer": 19,
+    "ingenieria e3t": 20,
+    "facultad de ciencias": 21,
+    "ingenieria quimica": 22,
+    "aula maxima de ciencias": 23,
+    "bienestar pro": 24,
+    "laboratorio de alta tension": 25,
+    "laboratorio de hidraulica": 26,
+    "talleres de diseno industrial": 27,
+    "planta de aceros": 28,
+    "jorge bautista vesga": 29,
+    "laboratorios pesados": 30,
+    "daniel casas": 31,
+    "edic": 32,
+    "ciencias humanas (virginia gutierrez)": 33,
+    "coliseo uis": 34,
+    "cenivam": 35,
+    "laboratorio estructura y materiales": 36,
+    "gestion logistica": 37,
+    "bienestar campestre": 38,
+    "auditorio jorge zalama": 39,
+}
+
+
+def mapear_ubicacion(texto_ubicacion):
+    if not texto_ubicacion:
+        return None
+    texto_norm = texto_ubicacion.strip().lower()
+    
+    for keyword, eid in edificios_keywords.items():
+        if keyword in texto_norm:
+            return eid
+    return None
+
 
 # ================== FUNCIONES DE IMÁGENES ==================
 
@@ -514,11 +647,9 @@ def importar_inventario(request):
                     df[col] = df[col].astype(str).str.strip()
             
             if "Fecha Recibido" in df.columns:
-                df["Fecha Recibido"] = (
-                    pd.to_datetime(df["Fecha Recibido"], errors="coerce", dayfirst=True)
-                    .fillna(pd.Timestamp("2000-01-01"))
-                    .dt.strftime("%Y-%m-%d")
-                )
+                # Normalización robusta de fechas (soporta 9/6/2019, 09-06-2019, seriales Excel, etc.)
+                df["Fecha Recibido"] = normalizar_columna_fecha_yyyy_mm_dd(df["Fecha Recibido"]) 
+
             
             if "Valor" in df.columns:
                 df["Valor"] = df["Valor"].astype(str).str.replace(r"[^\d.]", "", regex=True)
@@ -649,9 +780,10 @@ def importar_inventario(request):
                     # Ubicación
                     ubicacion_id = None
                     if item.get("ubicacion"):
-                        ubicacion_id = edificios_map.get(item["ubicacion"].strip().lower())
+                        ubicacion_id = mapear_ubicacion(item.get("ubicacion", ""))
                         if not ubicacion_id:
-                            not_found_ubicaciones.append(item["ubicacion"].strip())
+                            not_found_ubicaciones.append(item.get("ubicacion").strip())
+
 
                     # Usuario responsable (usar recibido_por_id)
                     responsable_id = usuario_cache.buscar_usuario(item.get("responsable", ""))
@@ -663,9 +795,9 @@ def importar_inventario(request):
                     # Agregar al batch (entregado_por = 1 por defecto, recibido_por = responsable_id)
                     records.append((
                         inventario_numero, item.get("descripcion"), item.get("marca"), 
-                        item.get("serial"),  # Nuevo campo serial
+                        item.get("serial"),
                         item.get("valor"), item.get("fecha_recibido"), categoria_id,
-                        ubicacion_id, 1, responsable_id, 0,  # entregado_por = 1 (Luis Carlos), recibido_por = responsable_id
+                        ubicacion_id, 1, responsable_id, 5,  # entregado_por = 1 (Luis Carlos), recibido_por = responsable_id
                         foto
                     ))
 
