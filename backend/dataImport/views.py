@@ -6,7 +6,7 @@ import unicodedata
 import re
 import os
 import uuid
-from PIL import Image
+from PIL import Image, ImageOps
 from openpyxl import load_workbook
 from django.conf import settings
 from rapidfuzz import fuzz
@@ -243,42 +243,53 @@ def mapear_ubicacion(texto_ubicacion):
 
 def procesar_imagen(img, inventario_numero):
     """
-    Procesa una imagen individual y la guarda
+    Procesa una imagen individual y la guarda en formato WebP sin metadatos
     """
     try:
         # Obtener datos de la imagen
         image_data = img._data()
         
-        # Determinar formato
-        file_extension = 'png'
-        if hasattr(img, 'format') and img.format:
-            file_extension = img.format.lower()
-        
-        # Generar nombre único
-        filename = f"inventario_{inventario_numero}_{uuid.uuid4().hex[:8]}.{file_extension}"
-        
-        # Crear directorio
-        images_dir = settings.MEDIA_ROOT / 'inventario_images'
-        os.makedirs(images_dir, exist_ok=True)
-        
-        # Ruta completa
-        file_path = images_dir / filename
-        
-        # Guardar imagen
-        with open(file_path, 'wb') as f:
-            f.write(image_data)
-        
-        # Opcional: Redimensionar imagen si es muy grande
-        try:
-            with Image.open(file_path) as pil_image:
-                # Si la imagen es muy grande, redimensionarla
-                if pil_image.width > 1920 or pil_image.height > 1080:
-                    pil_image.thumbnail((1920, 1080), Image.Resampling.LANCZOS)
-                    pil_image.save(file_path, optimize=True, quality=85)
-        except Exception as resize_error:
-            print(f"Error redimensionando imagen: {resize_error}")
-        
-        return f"inventario_images/{filename}"
+        # Crear objeto PIL Image desde los bytes
+        with Image.open(io.BytesIO(image_data)) as original_image:
+            
+            # Aplicar corrección de orientación EXIF si existe
+            original_image = ImageOps.exif_transpose(original_image)
+            
+            # Convertir a RGB si tiene canal alpha (PNG con transparencia)
+            if original_image.mode in ('RGBA', 'LA'):
+                background = Image.new('RGB', original_image.size, (255, 255, 255))
+                mask = original_image.split()[-1] if original_image.mode in ('RGBA', 'LA') else None
+                background.paste(original_image, mask=mask)
+                cleaned_image = background
+            elif original_image.mode == 'P':
+                cleaned_image = original_image.convert('RGB')
+            else:
+                cleaned_image = original_image.convert('RGB')
+            
+            # Redimensionar si es muy grande
+            if cleaned_image.width > 1920 or cleaned_image.height > 1080:
+                cleaned_image.thumbnail((1920, 1080), Image.Resampling.LANCZOS)
+            
+            # Generar nombre único con extensión webp
+            filename = f"inventario_{inventario_numero}_{uuid.uuid4().hex[:8]}.webp"
+            
+            # Crear directorio
+            images_dir = settings.MEDIA_ROOT / 'inventario_images'
+            os.makedirs(images_dir, exist_ok=True)
+            
+            # Ruta completa del archivo
+            file_path = images_dir / filename
+            
+            # Guardar en formato WebP SIN METADATOS
+            # La mejor forma de eliminar metadatos es recrear los datos de píxeles
+            data = list(cleaned_image.getdata())
+            new_image = Image.new(cleaned_image.mode, cleaned_image.size)
+            new_image.putdata(data)
+            
+            # Guardar sin metadatos
+            new_image.save(file_path, 'WEBP', quality=85, method=6, save_all=False)
+            
+            return f"inventario_images/{filename}"
         
     except Exception as e:
         print(f"Error procesando imagen: {str(e)}")
@@ -885,10 +896,6 @@ def obtener_inventario_usuario(request):
         return Response({"error": f"Error al obtener inventario: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-
-
-        # Agregar al final de backend/dataImport/views.py
-
 @api_view(["POST"])
 @parser_classes([MultiPartParser, FormParser])
 @login_required_api
@@ -950,33 +957,52 @@ def actualizar_imagen_item(request):
                     status=status.HTTP_403_FORBIDDEN,
                 )
             
-            # Determinar extensión de archivo
-            nombre_original = archivo_imagen.name
-            extension = nombre_original.split('.')[-1] if '.' in nombre_original else 'png'
-            
-            # Generar nombre único para el archivo
-            filename = f"inventario_{inventario_numero}_{uuid.uuid4().hex[:8]}.{extension}"
-            
+            # Generar nombre único con extensión webp
+            filename = f"inventario_{inventario_numero}_{uuid.uuid4().hex[:8]}.webp"
+
             # Crear directorio si no existe
             images_dir = settings.MEDIA_ROOT / 'inventario_images'
             os.makedirs(images_dir, exist_ok=True)
-            
+
             # Ruta completa del archivo
             file_path = images_dir / filename
-            
-            # Guardar la imagen temporalmente
-            with open(file_path, 'wb') as f:
-                for chunk in archivo_imagen.chunks():
-                    f.write(chunk)
-            
-            # Opcional: Redimensionar imagen si es muy grande
+
+            # Procesar y convertir a WebP
             try:
-                with Image.open(file_path) as pil_image:
-                    if pil_image.width > 1920 or pil_image.height > 1080:
-                        pil_image.thumbnail((1920, 1080), Image.Resampling.LANCZOS)
-                        pil_image.save(file_path, optimize=True, quality=85)
+                with Image.open(archivo_imagen) as original_image:
+                    
+                    # Aplicar corrección de orientación EXIF si existe
+                    original_image = ImageOps.exif_transpose(original_image)
+                    
+                    # Convertir a RGB si tiene canal alpha
+                    if original_image.mode in ('RGBA', 'LA'):
+                        background = Image.new('RGB', original_image.size, (255, 255, 255))
+                        mask = original_image.split()[-1] if original_image.mode in ('RGBA', 'LA') else None
+                        background.paste(original_image, mask=mask)
+                        cleaned_image = background
+                    elif original_image.mode == 'P':
+                        cleaned_image = original_image.convert('RGB')
+                    else:
+                        cleaned_image = original_image.convert('RGB')
+                    
+                    # Redimensionar si es muy grande
+                    if cleaned_image.width > 1920 or cleaned_image.height > 1080:
+                        cleaned_image.thumbnail((1920, 1080), Image.Resampling.LANCZOS)
+                    
+                    # Eliminar metadatos recreando la imagen
+                    data = list(cleaned_image.getdata())
+                    new_image = Image.new(cleaned_image.mode, cleaned_image.size)
+                    new_image.putdata(data)
+                    
+                    # Guardar en formato WebP SIN METADATOS
+                    new_image.save(file_path, 'WEBP', quality=85, method=6, save_all=False)
+                    
             except Exception as resize_error:
-                print(f"Error redimensionando imagen: {resize_error}")
+                print(f"Error procesando imagen: {resize_error}")
+                return Response(
+                    {"error": f"Error al procesar la imagen: {str(resize_error)}"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             
             # Ruta relativa para la base de datos
             foto_nueva = f"inventario_images/{filename}"
