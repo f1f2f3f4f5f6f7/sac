@@ -883,3 +883,132 @@ def obtener_inventario_usuario(request):
         return Response({"success": True, "total_items": len(items), "items": items}, status=status.HTTP_200_OK)
     except Exception as e:
         return Response({"error": f"Error al obtener inventario: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
+
+        # Agregar al final de backend/dataImport/views.py
+
+@api_view(["POST"])
+@parser_classes([MultiPartParser, FormParser])
+@login_required_api
+def actualizar_imagen_item(request):
+    """
+    Actualiza o sube la imagen de un item específico del inventario.
+    Recibe: inventario_numero y archivo de imagen
+    """
+    inventario_numero = request.data.get('inventario')
+    archivo_imagen = request.FILES.get('imagen')
+    
+    # Validaciones
+    if not inventario_numero:
+        return Response(
+            {"error": "Debes enviar el número de inventario en el campo 'inventario'."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    
+    if not archivo_imagen:
+        return Response(
+            {"error": "Debes enviar un archivo de imagen en el campo 'imagen'."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    
+    # Validar que es una imagen
+    if not archivo_imagen.content_type.startswith('image/'):
+        return Response(
+            {"error": "El archivo debe ser una imagen."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    
+    try:
+        with connection.cursor() as cursor:
+            # Verificar que el item existe y pertenece al usuario autenticado
+            cursor.execute("""
+                SELECT id, foto, recibido_por_id 
+                FROM inventario_items 
+                WHERE inventario = %s
+            """, [inventario_numero])
+            
+            item = cursor.fetchone()
+            
+            if not item:
+                return Response(
+                    {"error": f"No se encontró un item con número de inventario '{inventario_numero}'."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            
+            item_id, foto_anterior, recibido_por_id = item
+            
+            # Verificar que el usuario autenticado es el responsable del item
+            if recibido_por_id != request.user_id:
+                cursor.execute("SELECT nombre FROM usuarios WHERE id = %s", [recibido_por_id])
+                responsable = cursor.fetchone()
+                nombre_responsable = responsable[0] if responsable else "Usuario desconocido"
+                
+                return Response(
+                    {"error": f"No tienes permisos para actualizar este item. Responsable: {nombre_responsable}."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            
+            # Determinar extensión de archivo
+            nombre_original = archivo_imagen.name
+            extension = nombre_original.split('.')[-1] if '.' in nombre_original else 'png'
+            
+            # Generar nombre único para el archivo
+            filename = f"inventario_{inventario_numero}_{uuid.uuid4().hex[:8]}.{extension}"
+            
+            # Crear directorio si no existe
+            images_dir = settings.MEDIA_ROOT / 'inventario_images'
+            os.makedirs(images_dir, exist_ok=True)
+            
+            # Ruta completa del archivo
+            file_path = images_dir / filename
+            
+            # Guardar la imagen temporalmente
+            with open(file_path, 'wb') as f:
+                for chunk in archivo_imagen.chunks():
+                    f.write(chunk)
+            
+            # Opcional: Redimensionar imagen si es muy grande
+            try:
+                with Image.open(file_path) as pil_image:
+                    if pil_image.width > 1920 or pil_image.height > 1080:
+                        pil_image.thumbnail((1920, 1080), Image.Resampling.LANCZOS)
+                        pil_image.save(file_path, optimize=True, quality=85)
+            except Exception as resize_error:
+                print(f"Error redimensionando imagen: {resize_error}")
+            
+            # Ruta relativa para la base de datos
+            foto_nueva = f"inventario_images/{filename}"
+            
+            # Actualizar la base de datos
+            cursor.execute("""
+                UPDATE inventario_items 
+                SET foto = %s 
+                WHERE inventario = %s
+            """, [foto_nueva, inventario_numero])
+            
+            # Si había una imagen anterior, opcionalmente borrarla
+            if foto_anterior:
+                foto_anterior_path = settings.MEDIA_ROOT / foto_anterior
+                if foto_anterior_path.exists():
+                    try:
+                        os.remove(foto_anterior_path)
+                    except Exception as e:
+                        print(f"Error borrando imagen antigua: {e}")
+            
+            return Response(
+                {
+                    "status": "ok",
+                    "mensaje": "Imagen actualizada correctamente",
+                    "inventario": inventario_numero,
+                    "imagen_url": f"{settings.MEDIA_URL}{foto_nueva}"
+                },
+                status=status.HTTP_200_OK,
+            )
+    
+    except Exception as e:
+        return Response(
+            {"error": f"Error al actualizar imagen: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
