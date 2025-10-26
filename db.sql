@@ -1,6 +1,5 @@
 -- =========================================================
 -- TIPOS
--- (Ajusta los valores del enum según tu aplicación)
 -- =========================================================
 DO $$
 BEGIN
@@ -45,8 +44,7 @@ CREATE TABLE IF NOT EXISTS public.usuarios (
   -- ,UNIQUE (codigo)
 );
 
--- Salones (habitaciones/aulas) – el diagrama muestra una columna JSON con nombre truncado "salo..."
--- Renombré a "salon" (JSON); si tu columna tiene otro nombre, cámbialo aquí.
+-- Salones (habitaciones/aulas)
 CREATE TABLE IF NOT EXISTS public.salones (
   id          SERIAL PRIMARY KEY,
   salon       JSONB,  -- datos del salón (número, capacidad, etc.)
@@ -74,14 +72,14 @@ CREATE TABLE IF NOT EXISTS public.inventario_items (
 
 -- Trazabilidad / historial de movimientos del inventario
 CREATE TABLE IF NOT EXISTS public.inventario_trazabilidad (
-  id         BIGSERIAL PRIMARY KEY,
-  inventario INTEGER NOT NULL REFERENCES public.inventario_items(id)
-              ON UPDATE CASCADE ON DELETE CASCADE,
-  fecha      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  accion     TEXT,     -- p.ej. "alta", "traslado", "baja", etc.
-  detalle    TEXT,
-  usuario_id INTEGER REFERENCES public.usuarios(id) ON UPDATE CASCADE ON DELETE SET NULL,
-  meta       JSONB
+  id            BIGSERIAL PRIMARY KEY,
+  inventario_id INTEGER NOT NULL REFERENCES public.inventario_items(id)
+                ON UPDATE CASCADE ON DELETE CASCADE,
+  fecha         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  accion        TEXT,     -- p.ej. "alta", "traslado", "baja", etc.
+  detalle       TEXT,
+  usuario_id    INTEGER REFERENCES public.usuarios(id) ON UPDATE CASCADE ON DELETE SET NULL,
+  meta          JSONB
 );
 
 -- =========================================================
@@ -114,7 +112,7 @@ CREATE INDEX IF NOT EXISTS idx_inventario_items_ubicacion
   ON public.inventario_items (ubicacion_id);
 
 CREATE INDEX IF NOT EXISTS idx_inventario_trazabilidad_inventario_fecha
-  ON public.inventario_trazabilidad (inventario, fecha);
+  ON public.inventario_trazabilidad (inventario_id, fecha);
 
 CREATE INDEX IF NOT EXISTS idx_usuarios_escuela
   ON public.usuarios (escuela_id);
