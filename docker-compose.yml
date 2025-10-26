@@ -17,3 +17,16 @@ services:
       - DB_USER=postgres.rsmxmirttcvvxmexunpl
       - DB_PASSWORD=z1QlZIHiYHrrVcve
     entrypoint: ["/app/entrypoint.sh"]
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: sac_frontend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "4200:4200"
+    environment:
+      - NODE_ENV=development
+    command: npm start -- --host 0.0.0.0
