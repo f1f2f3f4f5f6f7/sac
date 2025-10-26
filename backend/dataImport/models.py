@@ -49,6 +49,7 @@ class InventarioItems(models.Model):
     inventario = models.CharField(unique=True, max_length=200)
     descripcion = models.TextField(blank=True, null=True)
     marca = models.CharField(max_length=120, blank=True, null=True)
+    serial = models.CharField(max_length=200, blank=True, null=True)  # Nuevo campo
     valor = models.DecimalField(max_digits=12, decimal_places=2)
     fecha_recibido = models.DateField()
     categoria = models.ForeignKey(Categorias, models.DO_NOTHING, blank=True, null=True)
@@ -56,6 +57,7 @@ class InventarioItems(models.Model):
     entregado_por = models.ForeignKey('Usuarios', models.DO_NOTHING, blank=True, null=True)
     recibido_por = models.ForeignKey('Usuarios', models.DO_NOTHING, related_name='inventarioitems_recibido_por_set', blank=True, null=True)
     escuela = models.ForeignKey(Escuelas, models.DO_NOTHING, blank=True, null=True)
+    imagen_path = models.CharField(max_length=500, blank=True, null=True)
 
     class Meta:
         managed = False
