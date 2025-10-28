@@ -739,7 +739,6 @@ def importar_inventario(request):
                 # === Cache inteligente de usuarios ===
                 usuario_cache = UsuarioCache(cursor)
 
-                # === MAPEAR IMÁGENES UNA SOLA VEZ ===
                 # === MAPEAR IMÁGENES UNA SOLA VEZ (solo .xlsx) ===
                 imagen_map = {}
                 soporta_imagenes = bool(temp_file_path and str(temp_file_path).lower().endswith(".xlsx"))
@@ -753,9 +752,12 @@ def importar_inventario(request):
                 FILA_PRIMER_DATO = 11
 
                 records = []
+                inventarios_procesados = []
                 for index, item in enumerate(data_json):
                     inventario_numero = item.get("no__inv_")
-
+                    if not inventario_numero:
+                        continue
+                    inventarios_procesados.append(inventario_numero)
                     # === EXTRAER IMAGEN POR FILA (solo .xlsx) ===
                     foto = None
                     if soporta_imagenes and inventario_numero:
@@ -800,7 +802,37 @@ def importar_inventario(request):
                         ubicacion_id, 1, responsable_id, 5,  # entregado_por = 1 (Luis Carlos), recibido_por = responsable_id
                         foto
                     ))
+                # === Consultar cuáles inventarios ya existen ===
+                existentes = []
+                nuevos = []
 
+                if inventarios_procesados:
+                    cursor.execute(
+                        "SELECT inventario FROM inventario_items WHERE inventario = ANY(%s)",
+                        (inventarios_procesados,)
+                    )
+                    existentes = [row[0] for row in cursor.fetchall()]
+                    nuevos = [inv for inv in inventarios_procesados if inv not in existentes]
+                
+                nuevos_detalle = []
+                if nuevos:
+                    for rec in records:
+                        inv_numero = rec[0]
+                        if inv_numero in nuevos:
+                            nuevos_detalle.append({
+                                "inventario": rec[0],
+                                "descripcion": rec[1],
+                                "marca": rec[2],
+                                "serial": rec[3],
+                                "valor": rec[4],
+                                "fecha_recibido": rec[5],
+                                "categoria_id": rec[6],
+                                "ubicacion_id": rec[7],
+                                "entregado_por_id": rec[8],
+                                "recibido_por_id": rec[9],
+                                "escuela_id": rec[10],
+                                "foto": rec[11],
+                            })
                 # === Batch UPSERT (actualizado para incluir foto) ===
                 if records:
                     execute_values(cursor, """
@@ -836,7 +868,10 @@ def importar_inventario(request):
                 "categoria_usada": categoria_manual,
                 "imagenes_extraidas": imagenes_procesadas,
                 "ubicaciones_no_encontradas": list(set(not_found_ubicaciones)),
-                "usuarios_no_encontrados": list(set(not_found_usuarios))
+                "usuarios_no_encontrados": list(set(not_found_usuarios)),
+                "nuevos": len(nuevos),
+                "repetidos": len(existentes),
+                "inventarios_nuevos": nuevos_detalle
             },
             status=status.HTTP_201_CREATED,
         )
