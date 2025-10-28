@@ -1,103 +1,140 @@
 <p-toast />
-<p-fileupload
-  #fileForm
-  name="myfile[]"
-  chooseLabel="Subir informe"
-  uploadLabel="Cargar Informe"
-  cancelLabel="Cancelar"
-  [multiple]="false"
-  accept=".xls, .xlsx, .csv"
-  maxFileSize="1000000"
-  mode="advanced"
-  customUpload="true"
-  (uploadHandler)="onUpload($event, fileForm)"
->
-  <ng-template #empty>
-    <div>Arrastra y suelta el informe para cargarlo.</div>
-  </ng-template>
-</p-fileupload>
-<br />
-<app-barcode-reader (dataSent)="getBarcodeNumber($event)"></app-barcode-reader>
-@if (inventario.length > 0) {
-<p-table
-  #dt
-  [value]="inventario"
-  [rows]="10"
-  [rowHover]="true"
-  [paginator]="true"
-  [globalFilterFields]="['inventario']"
-  [(selection)]="selectedItem"
-  dataKey="id"
-  currentPageReportTemplate="Mostrando {first} hasta {last} de {totalRecords} items"
-  [showCurrentPageReport]="true"
-  [rowsPerPageOptions]="[10, 20, 30]"
->
-  <ng-template #caption>
-    <div class="flex items-center justify-between">
-      <h5 class="m-0">Inventario</h5>
-      <p-iconfield>
-        <p-inputicon class="pi pi-search" />
-        <input
-          pInputText
-          type="text"
-          [(ngModel)]="globalQuery"
-          (ngModelChange)="dt.filterGlobal($event, 'contains')"
-          placeholder="Buscar..."
+<div>
+  <p-dialog
+    header="Seleccione una categoría antes de subir el archivo"
+    [modal]="true"
+    [(visible)]="visible"
+    [style]="{ width: '30rem' }"
+    (onHide)="closeDialog()"
+  >
+    <form
+      #exampleForm="ngForm"
+      (ngSubmit)="onSubmit(category)"
+      class="flex justify-center flex-col gap-4"
+    >
+      <div class="flex flex-col gap-1 mt-4 mb-4" >
+        <p-selectbutton
+          #model="ngModel"
+          [(ngModel)]="category"
+          [options]="categoryOptions"
+          optionLabel="label"
+          optionValue="value"
+          [invalid]="model.invalid && (model.touched || exampleForm.submitted)"
+          required
+          name="value"
+          size="large"
+          fluid
         />
-      </p-iconfield>
-    </div>
-  </ng-template>
+        @if (model.invalid && (model.touched || exampleForm.submitted)) {
+        <p-message severity="error" size="small" variant="simple">Categoria es Requerido</p-message>
+        }
+      </div>
+      <button pButton type="submit"><span pButtonLabel>Subir archivo</span></button>
+    </form>
+  </p-dialog>
+</div>
 
-  <ng-template #header>
-    <tr>
-      <th style="width: 3rem">
-        <p-tableHeaderCheckbox />
-      </th>
-      <th>Ind</th>
-      <th style="min-width: 12rem">Inventario</th>
-      <th>Descripción</th>
-      <th>Imagen</th>
-      <th>Valor</th>
-      <th>ubicacion</th>
-      <th style="min-width: 8rem"></th>
-    </tr>
-  </ng-template>
-  <ng-template #body let-item let-index="rowIndex">
-    <tr>
-      <td style="width: 3rem">
-        <p-tableCheckbox [value]="inventaryItem" />
-      </td>
-      <td>{{ index + 1 }}</td>
-      <td style="min-width: 12rem">{{ item.inventario }}</td>
-      <td>{{ item.descripcion }}</td>
-      <td>
-        <img
-          [src]="'https://primefaces.org/cdn/primeng/images/demo/product/'"
-          style="width: 64px"
-          class="rounded"
-        />
-      </td>
-      <td>{{ item.valor }}</td>
-      <td>{{ item.ubicacion }}</td>
-      <td>
-        <p-button
-          icon="pi pi-pencil"
-          class="mr-2"
-          [rounded]="true"
-          [outlined]="true"
-          (click)="editItem(item)"
-        />
-        <p-button
-          icon="pi pi-trash"
-          severity="danger"
-          [rounded]="true"
-          [outlined]="true"
-          (click)="deleteItem(item)"
-        />
-      </td>
-    </tr>
-  </ng-template>
-</p-table>
-}@else {
-<p>No hay inventario</p>
-}
+<section class="body">
+  <p-fileupload
+    #fileForm
+    name="myfile[]"
+    chooseLabel="Subir informe"
+    uploadLabel="Cargar Informe"
+    cancelLabel="Cancelar"
+    [multiple]="false"
+    accept=".xls, .xlsx, .csv"
+    maxFileSize="1000000"
+    mode="advanced"
+    customUpload="true"
+    (uploadHandler)="onUpload($event, fileForm)"
+  >
+    <ng-template #empty>
+      <div>Arrastra y suelta el informe para cargarlo.</div>
+    </ng-template>
+  </p-fileupload>
+  <br />
+  <app-barcode-reader (dataSent)="getBarcodeNumber($event)"></app-barcode-reader>
+  @if (inventario.length > 0) {
+  <p-table
+    #dt
+    [value]="inventario"
+    [rows]="10"
+    [rowHover]="true"
+    [paginator]="true"
+    [globalFilterFields]="['inventario']"
+    [(selection)]="selectedItem"
+    dataKey="id"
+    currentPageReportTemplate="Mostrando {first} hasta {last} de {totalRecords} items"
+    [showCurrentPageReport]="true"
+    [rowsPerPageOptions]="[10, 20, 30]"
+  >
+    <ng-template #caption>
+      <div class="flex items-center justify-between">
+        <h5 class="m-0">Inventario</h5>
+        <p-iconfield>
+          <p-inputicon class="pi pi-search" />
+          <input
+            pInputText
+            type="text"
+            [(ngModel)]="globalQuery"
+            (ngModelChange)="dt.filterGlobal($event, 'contains')"
+            placeholder="Buscar..."
+          />
+        </p-iconfield>
+      </div>
+    </ng-template>
+
+    <ng-template #header>
+      <tr>
+        <th style="width: 3rem">
+          <p-tableHeaderCheckbox />
+        </th>
+        <th>Ind</th>
+        <th style="min-width: 12rem">Inventario</th>
+        <th>Descripción</th>
+        <th>Imagen</th>
+        <th>Valor</th>
+        <th>ubicacion</th>
+        <th style="min-width: 8rem"></th>
+      </tr>
+    </ng-template>
+    <ng-template #body let-item let-index="rowIndex">
+      <tr>
+        <td style="width: 3rem">
+          <p-tableCheckbox [value]="inventaryItem" />
+        </td>
+        <td>{{ index + 1 }}</td>
+        <td style="min-width: 12rem">{{ item.inventario }}</td>
+        <td>{{ item.descripcion }}</td>
+        <td>
+          <img
+            [src]="'https://primefaces.org/cdn/primeng/images/demo/product/'"
+            style="width: 64px"
+            class="rounded"
+          />
+        </td>
+        <td>{{ item.valor }}</td>
+        <td>{{ item.ubicacion }}</td>
+        <td>
+          <p-button
+            icon="pi pi-pencil"
+            class="mr-2"
+            [rounded]="true"
+            [outlined]="true"
+            (click)="editItem(item)"
+          />
+          <p-button
+            icon="pi pi-trash"
+            severity="danger"
+            [rounded]="true"
+            [outlined]="true"
+            (click)="deleteItem(item)"
+          />
+        </td>
+      </tr>
+    </ng-template>
+  </p-table>
+  }@else {
+  <p>No hay inventario</p>
+  }
+</section>
