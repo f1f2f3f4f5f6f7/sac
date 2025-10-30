@@ -17,44 +17,24 @@ export class BarcodeReader {
 
   showDialog() {
     this.visible = true;
-    Html5Qrcode.getCameras()
-      .then((devices) => {
-        /**
-         * devices would be an array of objects of type:
-         * { id: "id", label: "label" }
-         */
-        if (devices && devices.length) {
-          let cameraId = devices[0].id;
-          const html5QrCode = new Html5Qrcode('reader');
-          html5QrCode
-            .start(
-              cameraId,
-              {
-                fps: 10, // Optional, frame per seconds for qr code scanning
-                qrbox: { width: 350, height: 150 }, // Optional, if you want bounded box UI
-              },
-              (decodedText) => {
-                html5QrCode
-                  .stop()
-                  .then((ignore) => {
-                    this.visible = false;
-                    this.dataSent.emit(decodedText);
-                  })
-                  .catch((err) => {
-                    // Stop failed, handle it.
-                  });
-              },
-              (errorMessage) => {
-                // parse error, ignore it.
-              }
-            )
-            .catch((err) => {
-              // Start failed, handle it.
-            });
-        }
-      })
-      .catch((err) => {
-        // handle err
-      });
+    Html5Qrcode.getCameras().then((devices) => {
+      if (devices && devices.length) {
+        const html5QrCode = new Html5Qrcode('reader');
+        const qrCodeSuccessCallback = (decodedText: any, decodedResult: any) => {
+          html5QrCode.stop().then(() => {
+            this.visible = false;
+            this.dataSent.emit(decodedText);
+          });
+        };
+        const qrCodeErrorCallback = (error: any) => {};
+        const config = { fps: 10, qrbox: { width: 250, height: 150 } };
+        html5QrCode.start(
+          { facingMode: 'environment' },
+          config,
+          qrCodeSuccessCallback,
+          qrCodeErrorCallback
+        );
+      }
+    });
   }
 }

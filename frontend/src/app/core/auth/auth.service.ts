@@ -4,7 +4,7 @@ import { UserLogin, UserWithToken } from '../models/user.model';
 import { BehaviorSubject, ignoreElements, map, Observable, tap } from 'rxjs';
 import { Router } from '@angular/router';
 
-const url = 'http://localhost:8000/api/accounts';
+const url = 'https://2z4cjldp-8000.use2.devtunnels.ms/api/accounts';
 const USER_LOCAL_STORAGE_KEY = 'accessToken';
 
 @Injectable({
