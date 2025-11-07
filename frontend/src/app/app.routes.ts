@@ -22,6 +22,11 @@ export const routes: Routes = [
           inventary: () => inject(InventaryService).getInventary()
         }
       },
+    {
+      path: 'rendicion',
+      canActivate: [authGuard],
+      loadComponent: () => import('./core/components/pages/rendicion/rendicion').then((m) => m.Rendicion)
+    }
     ],
   },
 ];
