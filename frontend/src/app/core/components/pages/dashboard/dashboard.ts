@@ -1,4 +1,4 @@
-import { Component, OnInit, ViewChild } from '@angular/core';
+import { Component, OnDestroy, OnInit, ViewChild } from '@angular/core';
 import { MessageService } from 'primeng/api';
 import { FileUpload, FileUploadHandlerEvent, FileUploadModule } from 'primeng/fileupload';
 import { InventaryService } from '../../../services/inventary/inventary.service';
@@ -15,6 +15,7 @@ import { DialogModule } from 'primeng/dialog';
 import { SelectButtonModule } from 'primeng/selectbutton';
 import { MessageModule } from 'primeng/message';
 import { FILEEVENTUPLOAD } from '../../../models/fileEvent.model';
+import { Subject, takeUntil } from 'rxjs';
 
 @Component({
   selector: 'app-dashboard',
@@ -37,15 +38,16 @@ import { FILEEVENTUPLOAD } from '../../../models/fileEvent.model';
   styleUrl: './dashboard.scss',
   providers: [MessageService],
 })
-export class Dashboard implements OnInit {
+export class Dashboard implements OnInit, OnDestroy {
   uploadedFiles: any[] = [];
-  inventario: any[] = [];
+  inventario: IInventaryItem[] = [];
   selectedItem!: IInventaryItem[] | null;
   @ViewChild('dt') dt!: Table;
   globalQuery: string = '';
   visible: boolean = false;
   category!: string;
   private eventFileUpload: FILEEVENTUPLOAD | null = null;
+  private $destroy = new Subject<void>();
   categoryOptions: any[] = [
     { label: 'Mayores', value: 'Mayores' },
     { label: 'Menores', value: 'Menores' },
@@ -59,7 +61,7 @@ export class Dashboard implements OnInit {
   ) {}
 
   ngOnInit() {
-    this.inventaryServices.inventary$.subscribe((data) => {
+    this.inventaryServices.inventary$.pipe(takeUntil(this.$destroy)).subscribe((data) => {
       this.inventario = data;
     });
   }
@@ -95,7 +97,8 @@ export class Dashboard implements OnInit {
         });
         fileForm.clear();
         this.uploadedFiles = [];
-        this.inventario = [...res.nuevos, ...this.inventario];
+        this.inventario = [...res.inventarios_nuevos, ...this.inventario];
+        this.inventaryServices.inventary = this.inventario;
       },
       error: (err) => {
         console.log(err);
@@ -126,5 +129,10 @@ export class Dashboard implements OnInit {
   }
   editItem(item: IInventaryItem) {
     throw new Error('Method not implemented.');
+  }
+
+  ngOnDestroy(): void {
+    this.$destroy.next();
+    this.$destroy.complete();
   }
 }

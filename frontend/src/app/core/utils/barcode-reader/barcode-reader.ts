@@ -13,22 +13,23 @@ import { Button } from 'primeng/button';
 export class BarcodeReader {
   visible: boolean = false;
   @Output() dataSent = new EventEmitter<string>();
+  html5QrCode!: Html5Qrcode;
   constructor() {}
 
   showDialog() {
     this.visible = true;
     Html5Qrcode.getCameras().then((devices) => {
       if (devices && devices.length) {
-        const html5QrCode = new Html5Qrcode('reader');
+        this.html5QrCode = new Html5Qrcode('reader');
         const qrCodeSuccessCallback = (decodedText: any, decodedResult: any) => {
-          html5QrCode.stop().then(() => {
+          this.html5QrCode.stop().then(() => {
             this.visible = false;
             this.dataSent.emit(decodedText);
           });
         };
         const qrCodeErrorCallback = (error: any) => {};
         const config = { fps: 10, qrbox: { width: 250, height: 150 } };
-        html5QrCode.start(
+        this.html5QrCode.start(
           { facingMode: 'environment' },
           config,
           qrCodeSuccessCallback,
@@ -36,5 +37,12 @@ export class BarcodeReader {
         );
       }
     });
+  }
+  hideDialog() {
+    this.visible = false;
+    this.html5QrCode
+      .stop()
+      .then(() => console.log('📷 Cámara detenida correctamente'))
+      .catch((err) => console.warn('⚠️ No se pudo detener la cámara o ya estaba detenida:', err));
   }
 }
