@@ -25,6 +25,10 @@ export class InventaryService {
     return this._inventary.asObservable();
   }
 
+  set inventary(items: IInventaryItem[]) {
+    this._inventary.next(items);
+  }
+
   getInventary(): Observable<IInventaryItem[]> {
     return this._httpClient.get(`${url}/api/dataImport/inventario-usuario/`).pipe(
       tap((response: any) => {

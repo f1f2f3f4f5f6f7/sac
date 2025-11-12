@@ -1,6 +1,6 @@
 <div>
-    <p-button (click)="showDialog()" label="Show" />
-    <p-dialog header="Escanear Código de Barras" [modal]="true" [(visible)]="visible" [style]="{ width: '30rem' }">
+    <p-button icon="pi pi-camera" (click)="showDialog()" />
+    <p-dialog header="Escanear Código de Barras" [modal]="true" [(visible)]="visible" (onHide)="hideDialog()" [style]="{ width: '30rem' }">
         <div id="reader"></div>
     </p-dialog>
 </div>

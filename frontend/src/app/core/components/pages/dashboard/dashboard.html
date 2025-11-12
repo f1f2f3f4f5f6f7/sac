@@ -12,7 +12,7 @@
       (ngSubmit)="onSubmit(category)"
       class="flex justify-center flex-col gap-4"
     >
-      <div class="flex flex-col gap-1 mt-4 mb-4" >
+      <div class="flex flex-col gap-1 mt-4 mb-4">
         <p-selectbutton
           #model="ngModel"
           [(ngModel)]="category"
@@ -53,7 +53,6 @@
     </ng-template>
   </p-fileupload>
   <br />
-  <app-barcode-reader (dataSent)="getBarcodeNumber($event)"></app-barcode-reader>
   @if (inventario.length > 0) {
   <p-table
     #dt
@@ -81,6 +80,7 @@
             placeholder="Buscar..."
           />
         </p-iconfield>
+        <app-barcode-reader (dataSent)="getBarcodeNumber($event)"></app-barcode-reader>
       </div>
     </ng-template>
 
@@ -108,9 +108,8 @@
         <td>{{ item.descripcion }}</td>
         <td>
           <img
-            [src]="'https://primefaces.org/cdn/primeng/images/demo/product/'"
-            style="width: 64px"
-            class="rounded"
+            [src]="'https://primefaces.org/cdn/primeng/images/demo/product/' + 'bamboo-watch.jpg'"
+            class="w-24 rounded"
           />
         </td>
         <td>{{ item.valor }}</td>
