@@ -44,6 +44,8 @@ def actualizar_info_item(request):
     ubicacion_id = request.data.get('ubicacion_id')
     salon = request.data.get('salon')
     observaciones = request.data.get('observaciones')
+    inventoried = request.data.get('inventoried')
+
 
     # Validación mínima
     if not inventario_numero:
@@ -179,6 +181,23 @@ def actualizar_info_item(request):
                 campos_update.append("observaciones = %s")
                 valores.append(observaciones)
 
+
+            if inventoried is not None:
+                valor_bool = str(inventoried).strip().lower()
+
+                if valor_bool in ("true", "1", "yes"):
+                    valor_bool = True
+                elif valor_bool in ("false", "0", "no"):
+                    valor_bool = False
+                else:
+                    return Response(
+                        {"error": "El campo 'inventoried' debe ser true/false o 1/0."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                campos_update.append("inventoried = %s")
+                valores.append(valor_bool)
+
             # Ejecutar update solo si hay campos a actualizar
             if campos_update:
                 sql = f"""
@@ -188,6 +207,7 @@ def actualizar_info_item(request):
                 """
                 valores.append(inventario_numero)
                 cursor.execute(sql, valores)
+
 
             return Response(
                 {
