@@ -1,5 +1,5 @@
 from django.urls import path
-from .views import importar_inventario, obtener_inventario_usuario, actualizar_imagen_item
+from .views import importar_inventario, obtener_inventario_usuario
 
 urlpatterns = [
     path("importar-inventario/", importar_inventario, name="importar_inventario"),

@@ -1,8 +1,8 @@
 from django.urls import path
-from .views import actualizar_imagen_item
+from .views import actualizar_info_item
 
 urlpatterns = [
-    path("actualizar-imagen/", actualizar_imagen_item, name="actualizar_imagen_item"),
+    path("actualizar-item/", actualizar_info_item, name="actualizar_info_item"),
 ]
 
 
