@@ -13,3 +13,14 @@ export interface IInventaryItem {
     valor: number;
     foto: string
 }
+
+
+export interface IBusquedaGeneralResult {
+    inventario: string;
+    ubicacion: string | null;
+    recibido_por: string | null;
+    escuela: string | null;
+    foto: string | null;
+    foto_url: string | null;
+  }
+  

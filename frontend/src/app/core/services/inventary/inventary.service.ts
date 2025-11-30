@@ -1,5 +1,6 @@
 import { HttpClient } from '@angular/common/http';
 import { inject, Injectable } from '@angular/core';
+import { map } from 'rxjs/operators';
 import {
   BehaviorSubject,
   catchError,
@@ -11,8 +12,9 @@ import {
   throwError,
 } from 'rxjs';
 import { IInventaryItem } from '../../models/inventary.model';
+import { IBusquedaGeneralResult } from '../../models/inventary.model';
 
-const url = 'https://2z4cjldp-8000.use2.devtunnels.ms';
+const url = 'http://localhost:8000';
 
 @Injectable({
   providedIn: 'root',
@@ -47,4 +49,24 @@ export class InventaryService {
     formData.append('categoria', Category);
     return this._httpClient.post(`${url}/api/dataImport/importar-inventario/`, formData);
   }
+
+
+    // Nuevo método para búsqueda generalizada
+    buscarInventarioGeneral(inventarioNumero: string): Observable<IBusquedaGeneralResult> {
+      return this._httpClient.get<{success: boolean, item: IBusquedaGeneralResult, message?: string}>(
+        `${url}/api/busquedaGeneral/buscar/`,
+        { params: { inventario: inventarioNumero } }
+      ).pipe(
+        tap((response) => {
+          if (!response.success) {
+            throw new Error(response.message || 'No se encontró el inventario');
+          }
+        }),
+        // Usar map para transformar la respuesta
+        map((response) => response.item),
+        catchError((error: any) => {
+          return throwError(() => error);
+        })
+      );
+    }
 }

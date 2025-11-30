@@ -22,7 +22,8 @@ urlpatterns = [
     path('api/accounts/', include('accounts.urls')), 
     path('api/dataImport/', include('dataImport.urls')),
     path('api/movements/', include('movements.urls')),
-    path('api/editarElemento/', include('editarElemento.urls'))
+    path('api/editarElemento/', include('editarElemento.urls')),
+    path('api/busquedaGeneral/', include('busquedaGeneral.urls')),  
 ]
 
 if settings.DEBUG:
