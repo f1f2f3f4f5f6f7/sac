@@ -16,6 +16,12 @@ import { MessageModule } from 'primeng/message';
 import { CardModule } from 'primeng/card';
 import { PanelModule } from 'primeng/panel';
 import { DividerModule } from 'primeng/divider';
+import { SplitterModule } from 'primeng/splitter';
+import { IconFieldModule } from 'primeng/iconfield';
+import { InputIconModule } from 'primeng/inputicon';
+import { FloatLabelModule } from 'primeng/floatlabel';
+
+
 
 
 @Component({
@@ -36,7 +42,12 @@ import { DividerModule } from 'primeng/divider';
     MessageModule, 
     CardModule, 
     PanelModule, 
-    DividerModule
+    DividerModule,
+    SplitterModule,
+    IconFieldModule,
+    InputIconModule,
+    FloatLabelModule,
+
   ],
   providers: [MessageService],
 })

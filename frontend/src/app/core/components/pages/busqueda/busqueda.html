@@ -13,14 +13,19 @@
 
         <div class="flex justify-content-center align-items-center gap-4 mb-3">
           <!-- INPUT DE BÚSQUEDA -->
-          <input
-            pInputText
-            type="text"
-            placeholder="Buscar código..."
-            [(ngModel)]="globalQuery"
-            (keyup.enter)="buscar()"
-            style="flex: 0 1 max-width: 500px; width: 100%;"
-          />
+          <p-floatlabel 
+          variant="on"
+          style="flex: 0 1 max-width: 500px; width: 100%;">
+      
+          <p-iconfield>
+              <p-inputicon class="pi pi-search" />
+              <input pInputText id="on_label" [(ngModel)]="globalQuery" autocomplete="off" (keyup.enter)="buscar()" style="width: 80%;" />
+          </p-iconfield>
+      
+          <label for="on_label">Buscar código...</label>
+      </p-floatlabel>
+      
+
 
           <!-- BOTÓN DE BÚSQUEDA -->
           <p-button label="Buscar" icon="pi pi-search" (onClick)="buscar()" [loading]="loading">
@@ -32,139 +37,101 @@
       </p-card>
 
       <!-- ================================================= -->
-      <!--   RESULTADOS DE BÚSQUEDA                         -->
+      <!--   SPLITTER -->
       <!-- ================================================= -->
-      <p-card styleClass="shadow-2 border-round-lg">
-        <!-- LOADING -->
-        @if (loading) {
-        <div class="flex justify-content-center align-items-center" style="min-height: 200px">
-          <p-progressSpinner />
-        </div>
-        }
-
-        <!-- RESULTADO OK -->
-        @else if (resultado) {
-
-        <div class="text-center mb-4">
-          <h3 class="mt-3">Resultado del Inventario</h3>
-          <p-divider></p-divider>
-        </div>
-
-        <!-- Contenedor principal centrado -->
-        <div class="flex justify-content-center" style="width: 100%">
-          <div class="mx-auto" style="max-width: 900px; width: 100%">
-            <div class="grid">
-              <div class="col-12">
-                <!-- ======================== -->
-                <!--     TABLA DE DETALLES    -->
-                <!-- ======================== -->
-                <p-panel styleClass="border-round-lg informacion-general-panel">
-                    <ng-template pTemplate="header">
-                      <div class="text-center w-full">
-                        <span>Información General</span>
-                      </div>
-                    </ng-template>
-  
-                    <p-table [value]="[resultado]" [rows]="1" [paginator]="false" styleClass="w-full">
-                      <ng-template #body let-item>
-                        <tr>
-                          <td style="text-align: center"><strong>Ubicación</strong></td>
-                          <td style="text-align: center">{{ item.ubicacion ?? 'N/A' }}</td>
-                        </tr>
-  
-                        <tr>
-                          <td style="text-align: center"><strong>Recibido por</strong></td>
-                          <td style="text-align: center">{{ item.recibido_por ?? 'N/A' }}</td>
-                        </tr>
-  
-                        <tr>
-                          <td style="text-align: center"><strong>Escuela</strong></td>
-                          <td style="text-align: center">{{ item.escuela ?? 'N/A' }}</td>
-                        </tr>
-                      </ng-template>
-                    </p-table>
-                  </p-panel>
+      <p-splitter
+        [panelSizes]="[30, 70]"
+        styleClass="mb-6 border-round-2xl shadow-3 overflow-hidden"
+        [ngStyle]="{ height: '400px', 'border-radius': '1.5rem' }"
+      >
+        <!-- PANEL IZQUIERDO -->
+        <ng-template pTemplate="panel">
+          <div class="w-full h-full p-4 flex justify-content-center">
+            <!-- Contenedor ajustado -->
+            <div class="w-full" style="max-width: 500px">
+              <!-- Título -->
+              <div class="text-center mb-3">
+                <h3 class="mt-2 mb-1">Foto del Ítem</h3>
+                <p-divider></p-divider>
               </div>
 
-              <div class="col-12">
-                <!-- ======================== -->
-                <!--       FOTO DEL ITEM      -->
-                <!-- ======================== -->
-                <p-panel styleClass="border-round-lg">
-                  <ng-template pTemplate="header">
-                    <div class="text-center w-full">
-                      <span>Foto</span>
-                    </div>
-                  </ng-template>
-
-                  <div
-                    class="flex justify-content-center align-items-center"
-                    style="min-height: 200px; width: 100%"
-                  >
-                    @if (resultado.foto_url) {
-                    <div
-                      style="
-                        display: flex;
-                        justify-content: center;
-                        align-items: center;
-                        width: 100%;
-                      "
-                    >
-                      <p-image
-                        [src]="resultado.foto_url"
-                        alt="Foto del inventario"
-                        [preview]="true"
-                        styleClass="border-round"
-                        [ngStyle]="{
-                          'max-width': '100%',
-                          'max-height': '180px',
-                          width: 'auto',
-                          height: 'auto',
-                          display: 'block',
-                          margin: '0 auto'
-                        }"
-                      />
-                    </div>
-                    } @else {
-                    <p-message
-                      severity="warn"
-                      text="No hay foto disponible"
-                      class="mt-3"
-                    ></p-message>
-                    }
-                  </div>
-                </p-panel>
-              </div>
+              <!-- Panel foto -->
+              <p-panel header="" styleClass="border-round-xl shadow-2 w-full">
+                <div class="flex justify-content-center align-items-center" style="min-height: 220px;">
+                  @if (resultado && resultado.foto_url) {
+                    <!-- Imagen centrada y responsiva -->
+                    <p-image
+                      [src]="resultado.foto_url"
+                      alt="Foto del inventario"
+                      [preview]="true"
+                      styleClass="border-round-lg shadow-1"
+                      [ngStyle]="{
+                        'max-width': '100%',
+                        'max-height': '200px',
+                        'object-fit': 'contain'
+                      }"
+                    />
+                  } @else if (resultado && !resultado.foto_url) {
+                    <!-- Mensaje si no hay foto -->
+                    <p-message severity="warn" text="No hay foto disponible"></p-message>
+                  }
+                </div>
+              </p-panel>
             </div>
           </div>
-        </div>
+        </ng-template>
 
-        }
+        <!-- PANEL DERECHO -->
+        <ng-template pTemplate="panel">
+          <div class="w-full h-full p-4 flex justify-content-center overflow-auto">
+            <!-- Contenedor principal -->
+            <div class="w-full" style="max-width: 850px">
+              <!-- Título -->
+              <div class="text-center mb-3">
+                <h3 class="mt-2 mb-1">Información General</h3>
+                <p-divider></p-divider>
+              </div>
 
-        <!-- ERROR -->
-        @else if (error && globalQuery) {
-        <div class="flex justify-content-center">
-          <p-message
-            severity="error"
-            [text]="error"
-            styleClass="w-full"
-            [ngStyle]="{ 'max-width': '600px' }"
-          />
-        </div>
-        }
-
-        <!-- MENSAJE DEFAULT -->
-        @else if (globalQuery && !loading) {
-        <div class="flex justify-content-center">
-          <p-message
-            severity="info"
-            text="Ingrese un número de inventario válido."
-            styleClass="w-full"
-            [ngStyle]="{ 'max-width': '600px' }"
-          />
-        </div>
-        }
-      </p-card>
+              @if (resultado) {
+                <!-- Panel de Información General -->
+                <p-panel styleClass="border-round-xl shadow-2">
+                  <p-table
+                    [value]="[resultado]"
+                    [rows]="1"
+                    [paginator]="false"
+                    styleClass="w-full text-center"
+                  >
+                    <ng-template pTemplate="body" let-item>
+                      
+                      <tr>
+                        <td><strong>Recibido por</strong></td>
+                        <td>{{ item.recibido_por ?? 'N/A' }}</td>
+                      </tr>
+                      <tr>
+                        <td><strong>Ubicación</strong></td>
+                        <td>{{ item.ubicacion ?? 'N/A' }}</td>
+                      </tr>
+                      <tr>
+                        <td><strong>Escuela</strong></td>
+                        <td>{{ item.escuela ?? 'N/A' }}</td>
+                      </tr>
+                    </ng-template>
+                  </p-table>
+                </p-panel>
+              } @else if (error && globalQuery) {
+                <div class="flex justify-content-center">
+                  <p-message
+                    severity="error"
+                    [text]="error"
+                    styleClass="w-full"
+                    [ngStyle]="{ 'max-width': '600px' }"
+                  />
+                </div>
+              }
+            </div>
+          </div>
+        </ng-template>
+      </p-splitter>
     </div>
   </div>
 </section>
