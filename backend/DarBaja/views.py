@@ -4,15 +4,22 @@ import io
 import datetime
 from io import BytesIO
 from datetime import date
+
 from django.conf import settings
 from django.http import HttpResponse, JsonResponse
 from django.views.decorators.http import require_POST
-from openpyxl import load_workbook
 from django.db import connection
+from django.utils import timezone
+
+from openpyxl import load_workbook
+from openpyxl.styles import Alignment
+
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
+
 from accounts.views import login_required_api
+
 
 @api_view(["POST"])
 @login_required_api
@@ -21,7 +28,7 @@ def solicitud_baja(request):
     Genera el formato de baja en Excel a partir de:
     - inventario (inventario_items.inventario)
     - motivo  (texto libre)
-    
+
     Body:
     {
         "items": [
@@ -30,7 +37,7 @@ def solicitud_baja(request):
         ]
     }
     """
-    
+
     try:
         items = request.data.get("items")
         if not items or not isinstance(items, list):
@@ -62,11 +69,13 @@ def solicitud_baja(request):
         inventarios_unicos = list(dict.fromkeys(inventarios))  # preserva orden
 
         # --- 2. Consultar inventario_items + usuarios ---
+        # MUY IMPORTANTE: traemos también ii.id (PK) para usarlo en la trazabilidad
         with connection.cursor() as cursor:
             cursor.execute(
                 """
                 SELECT 
-                    ii.inventario,
+                    ii.id,              -- PK de inventario_items
+                    ii.inventario,      -- número de inventario
                     ii.descripcion,
                     ii.categoria_id,
                     ii.recibido_por_id,
@@ -85,13 +94,23 @@ def solicitud_baja(request):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        # Mapear por inventario para mantener el orden del request
+        # Mapear por número de inventario para mantener el orden del request
+        # y guardar también el id (PK) real.
         campos_por_inv = {}
         responsables_ids = set()
         responsables_nombres = set()
 
-        for inventario, descripcion, categoria_id, recibido_por_id, usuario_nombre in rows:
-            campos_por_inv[str(inventario)] = {
+        for (
+            inventario_pk,   # ii.id
+            inventario_num,  # ii.inventario
+            descripcion,
+            categoria_id,
+            recibido_por_id,
+            usuario_nombre,
+        ) in rows:
+            campos_por_inv[str(inventario_num)] = {
+                "id": inventario_pk,
+                "inventario": inventario_num,
                 "descripcion": descripcion,
                 "categoria_id": categoria_id,
                 "recibido_por_id": recibido_por_id,
@@ -184,33 +203,88 @@ def solicitud_baja(request):
             ws[f"B{fila}"] = desc   # ELEMENTO (B-C unidas en plantilla)
             ws[f"D{fila}"] = motivo # MOTIVO BAJA
 
-        # --- 7. Guardar en memoria, guardar copia en servidor y devolver el archivo ---
+        # --- 6.1. Ajustar formato: texto envuelto y ancho de columnas ---
+        for row in range(9, fila_mayores):  # filas de MAYORES usadas
+            for col in ("B", "D"):
+                cell = ws[f"{col}{row}"]
+                if cell.value:
+                    cell.alignment = Alignment(
+                        wrap_text=True,
+                        vertical="top",
+                    )
+
+        for row in range(25, fila_menores):  # filas de MENORES usadas
+            for col in ("B", "D"):
+                cell = ws[f"{col}{row}"]
+                if cell.value:
+                    cell.alignment = Alignment(
+                        wrap_text=True,
+                        vertical="top",
+                    )
+
+        for col in ("B", "D"):
+            max_len = 0
+            for cell in ws[col]:
+                if cell.value:
+                    max_len = max(max_len, len(str(cell.value)))
+            ws.column_dimensions[col].width = min(max_len + 2, 80)
+
+        # --- 7. Guardar en memoria y en servidor ---
         output = io.BytesIO()
         wb.save(output)
         output.seek(0)
 
-        # Nombre de archivo (puedes incluir folio, usuario, etc. si quieres)
         filename = f"solicitud_baja_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
 
-        # 7.1 Guardar en el servidor (MEDIA_ROOT/solicitudes_baja/)
         media_root = getattr(settings, "MEDIA_ROOT", None)
+        file_path = None
         if media_root:
             dest_dir = os.path.join(media_root, "solicitudes_baja")
             os.makedirs(dest_dir, exist_ok=True)
             file_path = os.path.join(dest_dir, filename)
-
             with open(file_path, "wb") as f:
                 f.write(output.getvalue())
-            # Si quieres, podrías loguear o almacenar file_path en BD.
 
-        # 7.2 Responder al cliente con el archivo
+        # --- 8. Registrar trazabilidad ---
+        # Usamos el id real de inventario_items (inventario_pk) en el campo inventario_id
+        now_ts = timezone.now()
+        with connection.cursor() as cursor:
+            for inv in inventarios_unicos:
+                data = campos_por_inv[inv]
+                inventario_pk = data["id"]  # ESTE es el que apunta a inventario_items.id
+                motivo = motivos_por_inv[inv]
+
+                meta_dict = {
+                    "motivo": motivo,
+                    "responsable": nombre_responsable,
+                    "archivo": filename,
+                    "ruta_archivo": file_path,
+                }
+
+                cursor.execute(
+                    """
+                    INSERT INTO inventario_trazabilidad
+                        (inventario_id, fecha, accion, detalle, usuario_id, meta)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    """,
+                    [
+                        inventario_pk,
+                        now_ts,
+                        "BAJA_SOLICITADA",
+                        motivo,
+                        request.user_id,          # viene del decorador login_required_api
+                        json.dumps(meta_dict),
+                    ],
+                )
+
+        # --- 9. Responder al cliente con el archivo ---
         response = HttpResponse(
             output.getvalue(),
             content_type=(
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             ),
         )
-        response["Content-Disposition"] = f'attachment; filename=\"{filename}\"'
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
         return response
 
     except Exception as e:
