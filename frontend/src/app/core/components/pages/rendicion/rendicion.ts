@@ -7,7 +7,7 @@ import { DataView } from 'primeng/dataview';
 import { ButtonModule } from 'primeng/button';
 import { SelectModule } from 'primeng/select';
 import { InputTextModule } from 'primeng/inputtext';
-import { FormsModule } from '@angular/forms';
+import { FormsModule, NgForm } from '@angular/forms';
 import { IconFieldModule } from 'primeng/iconfield';
 import { InputIconModule } from 'primeng/inputicon';
 import { CommonModule } from '@angular/common';
@@ -16,6 +16,8 @@ import { ImageModule } from 'primeng/image';
 import { DialogModule } from 'primeng/dialog';
 import { BarcodeReader } from '../../../utils/barcode-reader/barcode-reader';
 import { ProgressSpinnerModule } from 'primeng/progressspinner';
+import { MessageModule } from 'primeng/message';
+import { ToastModule } from 'primeng/toast';
 
 @Component({
   selector: 'app-rendicion',
@@ -33,6 +35,8 @@ import { ProgressSpinnerModule } from 'primeng/progressspinner';
     ImageModule,
     ProgressSpinnerModule,
     DialogModule,
+    MessageModule,
+    ToastModule,
   ],
   templateUrl: './rendicion.html',
   styleUrl: './rendicion.scss',
@@ -40,7 +44,15 @@ import { ProgressSpinnerModule } from 'primeng/progressspinner';
   standalone: true,
 })
 export class Rendicion implements OnInit, OnDestroy {
+  selectedBuilding!: object;
+  edificios: any[] = [
+    {
+      name: 'Edificio A',
+      value: 'edificio_a',
+    },
+  ];
   inventario: IInventaryItem[] = [];
+  selectedItem!: IInventaryItem | null;
   visible: boolean = false;
   sortOptions!: SelectItem[];
   sortOrder!: number;
@@ -97,7 +109,7 @@ export class Rendicion implements OnInit, OnDestroy {
 
   openInventaryDialog(item: IInventaryItem) {
     this.visible = true;
-    console.log(item);
+    this.selectedItem = item;
   }
 
   async onShowDialog() {
@@ -114,15 +126,14 @@ export class Rendicion implements OnInit, OnDestroy {
     this.canvas.style.display = 'none';
     this.video.style.display = 'flex';
     const constraints = {
-      video: { facingMode: 'environment', width: 383, height: 383 },
+      video: { facingMode: 'environment', width: 640, height: 480 },
       audio: false,
     };
     try {
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      console.log('📷 Cámara iniciada correctamente', stream);
       this.video.srcObject = stream;
       this.video.play();
-      this.video.style.height = 'auto';
+      this.video.style.height = '383px';
       this.cameraStarted = true;
     } catch (error) {
       console.log('⚠️ No se pudo iniciar la cámara:', error);
@@ -143,8 +154,31 @@ export class Rendicion implements OnInit, OnDestroy {
 
   closeDialog() {
     this.visible = false;
+
+    const stream = this.video.srcObject as MediaStream | null;
+
+    if (stream) {
+      const tracks = stream.getTracks();
+      tracks.forEach((track) => track.stop());
+    }
+
     this.video.srcObject = null;
     this.video.pause();
+  }
+
+  onSubmit(form: NgForm) {
+    console.log(form.valid);
+
+    if (form.valid && this.retake) {
+      console.log(this.selectedBuilding);
+      this.canvas.toBlob((blob) => {
+        if (!blob) {
+          return;
+        }
+        const file = new File([blob], 'foto.png', { type: 'image/png' });
+      }, 'image/png');
+      form.resetForm();
+    }
   }
 
   ngOnDestroy(): void {

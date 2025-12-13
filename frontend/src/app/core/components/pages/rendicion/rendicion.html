@@ -1,3 +1,4 @@
+<p-toast />
 <section id="rendicion">
   <p-dataview
     #dv
@@ -96,16 +97,6 @@
     (onHide)="closeDialog()"
   >
     <section id="camera">
-      @if (!cameraStarted) {
-      <div id="spinner" class="card flex justify-center">
-        <p-progress-spinner
-          strokeWidth="8"
-          fill="transparent"
-          animationDuration=".5s"
-          [style]="{ width: '50px', height: '50px' }"
-        />
-      </div>
-      }
       <video id="video"></video>
       <canvas id="canvas">
         <img src="" class="photo" alt="photo" />
@@ -119,6 +110,44 @@
           (onClick)="retake ? videoStream() : takePhoto()"
           >{{ retake ? 'Retomar Foto' : 'Tomar Foto' }}</p-button
         >
+      </div>
+      <div class="flex justify-center w-full mt-4">
+        <form
+          #exampleForm="ngForm"
+          (ngSubmit)="onSubmit(exampleForm)"
+          class="flex flex-col gap-4 w-full"
+        >
+          <div class="flex flex-col gap-1">
+            <p-select
+              #building="ngModel"
+              name="selectedBuilding"
+              [(ngModel)]="selectedBuilding"
+              [options]="edificios"
+              [invalid]="building.invalid && (building.touched || exampleForm.submitted)"
+              optionLabel="name"
+              placeholder="Seleccionar edificio"
+              class="w-full"
+              required
+            />
+            @if (building.invalid && (building.touched || exampleForm.submitted)) {
+            <p-message severity="error" size="small" variant="simple"
+              >Edificio es requerido.</p-message
+            >
+            }
+          </div>
+          <button pButton type="submit" [disabled]="!(exampleForm.valid && retake)">
+            <span pButtonLabel>Enviar</span>
+          </button>
+        </form>
+      </div>
+      } @else {
+      <div id="spinner" class="card flex justify-center">
+        <p-progress-spinner
+          strokeWidth="8"
+          fill="transparent"
+          animationDuration=".5s"
+          [style]="{ width: '50px', height: '50px' }"
+        />
       </div>
       }
     </section>
