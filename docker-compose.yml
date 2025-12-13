@@ -29,4 +29,4 @@ services:
       - "4200:4200"
     environment:
       - NODE_ENV=development
-    command: npm start -- --host 0.0.0.0 --poll=1000
+    command: npm start -- --host 0.0.0.0
