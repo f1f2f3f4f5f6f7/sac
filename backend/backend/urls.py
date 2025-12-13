@@ -25,6 +25,7 @@ urlpatterns = [
     path('api/editarElemento/', include('editarElemento.urls')),
     path('api/busquedaGeneral/', include('busquedaGeneral.urls')),  
     path('api/DarBaja/', include('DarBaja.urls'))
+    path('api/Prestamo/', include('Prestamo.urls')),
 ]
 
 if settings.DEBUG:
