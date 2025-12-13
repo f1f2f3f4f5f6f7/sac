@@ -22,6 +22,7 @@ urlpatterns = [
     path('api/accounts/', include('accounts.urls')), 
     path('api/dataImport/', include('dataImport.urls')),
     path('api/movements/', include('movements.urls')),
+    path('api/Prestamo/', include('Prestamo.urls')),
     path('api/editarElemento/', include('editarElemento.urls'))
 ]
 
