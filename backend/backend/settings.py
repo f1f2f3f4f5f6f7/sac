@@ -27,6 +27,10 @@ DEBUG = True
 
 ALLOWED_HOSTS = []
 
+CORS_ALLOWED_ORIGINS = [
+    'http://localhost:4200',
+    'http://127.0.0.1:4200',
+]
 
 CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_CREDENTIALS = True
@@ -64,6 +68,7 @@ INSTALLED_APPS = [
     'accounts',                  # tu app
     'dataImport',
     'movements',                 # Agregar esta línea
+    'busquedaGeneral',
 ]
 
 
@@ -135,6 +140,9 @@ REST_FRAMEWORK = {
 # Configuración para archivos de imágenes
 MEDIA_ROOT = BASE_DIR / 'media'
 MEDIA_URL = '/media/'
+
+SECURE_CROSS_ORIGIN_OPENER_POLICY = None
+SECURE_CROSS_ORIGIN_RESOURCE_POLICY = 'cross-origin'
 
 # Configuración para servir archivos estáticos
 STATIC_ROOT = BASE_DIR / 'staticfiles'

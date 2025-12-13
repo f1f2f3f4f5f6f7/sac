@@ -28,6 +28,7 @@ export class AppMenu {
                 label: 'Actividades',
                 items: [
                     { label: 'Rendición de Inventarío', icon: 'pi pi-fw pi-id-card', routerLink: ['/rendicion'] },
+                    { label: 'Busqueda General', icon: 'pi pi-fw pi-search', routerLink: ['/busqueda'] },
                 ]
             }
 /*             {

@@ -1,0 +1,10 @@
+#camera video,
+#camera canvas,
+#camera img.photo {
+  display: block;
+  width: 383px;
+  height: 383px;
+  max-width: 100%;
+  object-fit: cover;
+  flex: 0 0 auto;
+}

@@ -87,30 +87,33 @@ export class Dashboard implements OnInit, OnDestroy {
     for (const file of event.files) {
       this.uploadedFiles.push(file);
     }
-    this.inventaryServices.uploadFile(this.uploadedFiles[0], this.category).subscribe({
-      next: (res: any) => {
-        console.log(res);
-        this.messageService.add({
-          severity: 'info',
-          summary: 'Archivo Cargado',
-          detail: '',
-        });
-        fileForm.clear();
-        this.uploadedFiles = [];
-        this.inventario = [...res.inventarios_nuevos, ...this.inventario];
-        this.inventaryServices.inventary = this.inventario;
-      },
-      error: (err) => {
-        console.log(err);
-        this.messageService.add({
-          severity: 'error',
-          summary: 'Fallo al cargar archivo',
-          detail: err?.error?.error || 'Error al subir el archivo',
-        });
-        fileForm.clear();
-        this.uploadedFiles = [];
-      },
-    });
+    this.inventaryServices
+      .uploadFile(this.uploadedFiles[0], this.category)
+      .pipe(takeUntil(this.$destroy))
+      .subscribe({
+        next: (res: any) => {
+          console.log(res);
+          this.messageService.add({
+            severity: 'info',
+            summary: 'Archivo Cargado',
+            detail: '',
+          });
+          fileForm.clear();
+          this.uploadedFiles = [];
+          this.inventario = [...res.inventarios_nuevos, ...this.inventario];
+          this.inventaryServices.inventary = this.inventario;
+        },
+        error: (err) => {
+          console.log(err);
+          this.messageService.add({
+            severity: 'error',
+            summary: 'Fallo al cargar archivo',
+            detail: err?.error?.error || 'Error al subir el archivo',
+          });
+          fileForm.clear();
+          this.uploadedFiles = [];
+        },
+      });
   }
 
   getBarcodeNumber(message: string) {
