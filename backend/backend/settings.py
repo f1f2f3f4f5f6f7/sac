@@ -67,7 +67,7 @@ INSTALLED_APPS = [
     'corsheaders',               # si necesitas CORS
     'accounts',                  # tu app
     'dataImport',
-    'movements',                 # Agregar esta línea
+    'movimientos',                 # Agregar esta línea
     'busquedaGeneral',
 ]
 

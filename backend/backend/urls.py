@@ -21,11 +21,9 @@ from django.conf.urls.static import static
 urlpatterns = [
     path('api/accounts/', include('accounts.urls')), 
     path('api/dataImport/', include('dataImport.urls')),
-    path('api/movements/', include('movements.urls')),
     path('api/editarElemento/', include('editarElemento.urls')),
     path('api/busquedaGeneral/', include('busquedaGeneral.urls')),  
-    path('api/DarBaja/', include('DarBaja.urls')),
-    path('api/Prestamo/', include('Prestamo.urls')),
+    path('api/movimientos/', include('movimientos.urls')),
 ]
 
 if settings.DEBUG:
