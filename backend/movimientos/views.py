@@ -689,3 +689,394 @@ def solicitud_prestamo(request):
             {"error": f"Error al generar la solicitud de préstamo: {str(e)}"},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
+
+
+@api_view(["POST"])
+@login_required_api
+def solicitud_traslado(request):
+    """
+    Genera el formato de TRASLADO en Excel y registra la trazabilidad.
+
+    Body esperado:
+    {
+        "destinatario_nombre": "Nombre del destinatario",
+        "items": [
+            { "inventario": "166718", "motivo": "Traslado a laboratorio X" },
+            { "inventario": "164553", "motivo": "Reubicación en oficina Y" }
+        ]
+    }
+    """
+
+    try:
+        data = request.data
+
+        # -------- 1. Datos generales del POST --------
+        destinatario_nombre = (
+            data.get("destinatario_nombre")
+            or data.get("nombre_destinatario")
+            or ""
+        ).strip()
+
+        items = data.get("items")
+
+        if not destinatario_nombre:
+            return Response(
+                {"error": "El campo 'destinatario_nombre' es obligatorio."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not items or not isinstance(items, list):
+            return Response(
+                {"error": "Debes enviar una lista 'items' con al menos un elemento."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # -------- 2. Validar items y preparar estructuras --------
+        inventarios = []
+        motivos_por_inv = {}
+
+        for idx, it in enumerate(items):
+            inv = (it.get("inventario") or "").strip()
+            mot = (it.get("motivo") or "").strip()
+            if not inv or not mot:
+                return Response(
+                    {
+                        "error": (
+                            "Cada item debe tener 'inventario' y 'motivo'. "
+                            f"Error en posición {idx}."
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            inventarios.append(inv)
+            motivos_por_inv[inv] = mot
+
+        inventarios_unicos = list(dict.fromkeys(inventarios))
+
+        # -------- 3. Obtener datos del usuario actual y destinatario --------
+        user_id = getattr(request, "user_id", None) or getattr(
+            getattr(request, "user", None), "id", None
+        )
+
+        nombre_usuario = ""
+        destinatario_id = None
+
+        with connection.cursor() as cursor:
+            # Usuario actual (responsable / "De:")
+            if user_id:
+                cursor.execute(
+                    "SELECT nombre FROM usuarios WHERE id = %s",
+                    [user_id],
+                )
+                row = cursor.fetchone()
+                if row:
+                    nombre_usuario = row[0] or ""
+
+            # Destinatario
+            cursor.execute(
+                """
+                SELECT id, nombre
+                FROM usuarios
+                WHERE LOWER(nombre) = LOWER(%s)
+                """,
+                [destinatario_nombre],
+            )
+            dest_rows = cursor.fetchall()
+
+        if not destinatario_nombre:
+            return Response(
+                {"error": "Debes indicar el nombre del destinatario."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not dest_rows:
+            return Response(
+                {
+                    "error": (
+                        "El destinatario indicado no existe en la tabla 'usuarios'."
+                    ),
+                    "destinatario": destinatario_nombre,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if len(dest_rows) > 1:
+            return Response(
+                {
+                    "error": (
+                        "Hay más de un usuario con ese nombre. "
+                        "Por favor especifica un identificador único."
+                    ),
+                    "coincidencias": [r[1] for r in dest_rows],
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        destinatario_id, destinatario_nombre_db = dest_rows[0]
+        # Usamos el nombre tal como está en BD (puede tener mayúsculas, tildes, etc.)
+        destinatario_nombre = destinatario_nombre_db
+
+        # Si el usuario actual no está en usuarios, usamos un fallback
+        if not nombre_usuario:
+            nombre_usuario = "USUARIO ACTUAL"
+
+        # -------- 4. Consultar inventario_items --------
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT 
+                    ii.id,          -- PK
+                    ii.inventario,  -- número de inventario
+                    ii.descripcion,
+                    ii.categoria_id,
+                    ii.serial
+                FROM inventario_items ii
+                WHERE ii.inventario = ANY(%s)
+                """,
+                [inventarios_unicos],
+            )
+            rows = cursor.fetchall()
+
+        if not rows:
+            return Response(
+                {
+                    "error": (
+                        "No se encontró ningún elemento con esos números de inventario."
+                    )
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        campos_por_inv = {}
+        for (
+            item_id,
+            inventario,
+            descripcion,
+            categoria_id,
+            serial,
+        ) in rows:
+            campos_por_inv[str(inventario)] = {
+                "id": item_id,
+                "inventario": inventario,
+                "descripcion": descripcion or "",
+                "categoria_id": categoria_id,
+                "serial": serial or "",
+            }
+
+        no_encontrados = [
+            inv for inv in inventarios_unicos if inv not in campos_por_inv
+        ]
+        if no_encontrados:
+            return Response(
+                {
+                    "error": "Algunos inventarios no existen en la base de datos.",
+                    "inventarios_no_encontrados": no_encontrados,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # -------- 5. Cargar plantilla de TRASLADO --------
+        template_path = os.path.join(
+            settings.BASE_DIR,
+            "static",
+            "plantillas",
+            "formato-traslado.xlsx",
+        )
+
+        if not os.path.exists(template_path):
+            return Response(
+                {"error": f"No se encontró la plantilla en: {template_path}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        wb = load_workbook(template_path)
+        try:
+            ws = wb["Traslado"]
+        except KeyError:
+            ws = wb.active
+
+        hoy = date.today()
+        fecha_str = hoy.strftime("%d/%m/%Y")
+
+        # U.A.A -> B5:C5 (combinada)
+        _set_merged_safe(ws, "B5", "Escuela de sistemas")
+
+        # Fecha -> D5 (tiene texto 'Fecha: ...')
+        # Sobrescribimos con el formato requerido
+        ws["D5"] = f"Fecha: {fecha_str}"
+
+        # 'De:' -> B7:D7 (combinada, escribimos en B7)
+        _set_merged_safe(ws, "B7", nombre_usuario)
+
+        # Firma responsable (parte inferior) A38:B38  -> 'Nombre: nombre-usuario'
+        _set_merged_safe(ws, "B38", f"Nombre: {nombre_usuario}")
+
+        # Firma destinatario C38:D38 -> 'Nombre: nombre-destinatario'
+        _set_merged_safe(ws, "C38", f"Nombre: {destinatario_nombre}")
+
+        # -------- 6. Tablas según categoría --------
+        # Secciones (filas basadas en tu plantilla):
+        #  - Mayores:   encabezado en fila 9, datos 10–18
+        #  - Menores:   encabezado en fila 20, datos 21–26
+        #  - Intangibles: encabezado en fila 28, datos 29–32
+
+        fila_mayores = 10
+        fila_menores = 21
+        fila_intang  = 29
+
+        consec_mayores = 1
+        consec_menores = 1
+        consec_intang  = 1
+
+        for inv in inventarios_unicos:
+            data = campos_por_inv[inv]
+            desc = data["descripcion"]
+            categoria = data["categoria_id"]
+            serial = data["serial"]
+            motivo = motivos_por_inv[inv]
+
+            # Texto para la columna ELEMENTO
+            texto_elemento = f"{inv} - {desc}"
+
+            if categoria == 2:  # MAYORES
+                if fila_mayores > 18:
+                    # No hay más filas libres en la tabla de mayores
+                    continue
+
+                fila = fila_mayores
+                ws[f"A{fila}"] = consec_mayores
+                _set_merged_safe(
+                    ws,
+                    f"B{fila}",
+                    texto_elemento,
+                    Alignment(wrap_text=True, vertical="top"),
+                )
+                ws[f"D{fila}"] = serial
+                ws[f"E{fila}"] = motivo
+                ws[f"F{fila}"] = destinatario_nombre
+                ws[f"G{fila}"] = "Escuela de sistemas"
+
+                fila_mayores += 1
+                consec_mayores += 1
+
+            elif categoria == 1:  # MENORES
+                if fila_menores > 26:
+                    continue
+
+                fila = fila_menores
+                ws[f"A{fila}"] = consec_menores
+                _set_merged_safe(
+                    ws,
+                    f"B{fila}",
+                    texto_elemento,
+                    Alignment(wrap_text=True, vertical="top"),
+                )
+                ws[f"D{fila}"] = serial
+                ws[f"E{fila}"] = motivo
+                ws[f"F{fila}"] = destinatario_nombre
+                ws[f"G{fila}"] = "Escuela de sistemas"
+
+                fila_menores += 1
+                consec_menores += 1
+
+            elif categoria == 3:  # INTANGIBLES
+                if fila_intang > 32:
+                    continue
+
+                fila = fila_intang
+                ws[f"A{fila}"] = consec_intang
+                _set_merged_safe(
+                    ws,
+                    f"B{fila}",
+                    texto_elemento,
+                    Alignment(wrap_text=True, vertical="top"),
+                )
+                ws[f"D{fila}"] = motivo
+
+                fila_intang += 1
+                consec_intang += 1
+
+            else:
+                # Categoría desconocida -> por ahora la ignoramos
+                continue
+
+        # -------- 7. Guardar Excel en memoria y en servidor --------
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        filename = f"solicitud_traslado_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+
+        media_root = getattr(settings, "MEDIA_ROOT", None)
+        saved_path = None
+        if media_root:
+            dest_dir = os.path.join(media_root, "solicitudes_traslado")
+            os.makedirs(dest_dir, exist_ok=True)
+            saved_path = os.path.join(dest_dir, filename)
+            with open(saved_path, "wb") as f:
+                f.write(output.getvalue())
+
+        # -------- 8. Registrar trazabilidad --------
+        ahora = timezone.now()
+        trazas = []
+
+        for inv in inventarios_unicos:
+            data = campos_por_inv[inv]
+            inventario_pk = data["id"]
+            motivo = motivos_por_inv[inv]
+
+            detalle = (
+                f"Traslado de elemento inventario {inv}. "
+                f"De: {nombre_usuario}. "
+                f"Para: {destinatario_nombre}. "
+                f"Motivo: {motivo}"
+            )
+
+            meta = {
+                "tipo": "traslado",
+                "inventario": inv,
+                "de": nombre_usuario,
+                "destinatario_id": destinatario_id,
+                "destinatario_nombre": destinatario_nombre,
+                "motivo": motivo,
+                "archivo_generado": filename,
+                "ruta_archivo": saved_path,
+            }
+
+            trazas.append(
+                (
+                    inventario_pk,
+                    ahora,
+                    "TRASLADO_SOLICITADO",
+                    detalle,
+                    user_id,
+                    json.dumps(meta, ensure_ascii=False),
+                )
+            )
+
+        if trazas:
+            with connection.cursor() as cursor:
+                cursor.executemany(
+                    """
+                    INSERT INTO inventario_trazabilidad
+                        (inventario_id, fecha, accion, detalle, usuario_id, meta)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    """,
+                    trazas,
+                )
+
+        # -------- 9. Responder con el archivo --------
+        response = HttpResponse(
+            output.getvalue(),
+            content_type=(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ),
+        )
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return response
+
+    except Exception as e:
+        return Response(
+            {"error": f"Error al generar la solicitud de traslado: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
