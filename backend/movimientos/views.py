@@ -1080,3 +1080,414 @@ def solicitud_traslado(request):
             {"error": f"Error al generar la solicitud de traslado: {str(e)}"},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
+
+# Mapa para traducir el query param "tipo" a valores de la columna accion
+TIPO_ACCION_MAP = {
+    "baja": ["BAJA_SOLICITADA"],
+    "traslado": ["TRASLADO_SOLICITADO"],
+}
+
+
+@api_view(["GET"])
+@login_required_api
+def historial_trazabilidad(request):
+    """
+    Consulta la trazabilidad de movimientos del usuario autenticado.
+
+    Parámetros (query string):
+
+    - tipo / accion (opcional): filtra por tipo de movimiento (columna 'accion')
+        Ejemplos de valores según tu implementación actual:
+            - "BAJA_SOLICITADA"
+            - "Prestamo"
+            - "TRASLADO_SOLICITADO"
+
+    - anio / year (opcional): filtrar por año (YYYY)
+    - mes / month (opcional): si se envía junto con el año, filtra por año + mes (1–12)
+
+    Ejemplos:
+        /api/movimientos/consultar_trazabilidad/                -> todo el historial del usuario
+        /api/movimientos/consultar_trazabilidad/?anio=2025      -> todo 2025
+        /api/movimientos/consultar_trazabilidad/?anio=2025&mes=3 -> marzo 2025
+        /api/movimientos/consultar_trazabilidad/?tipo=Prestamo  -> solo préstamos
+    """
+
+    try:
+        # --- 1. Identificar usuario actual ---
+        user_id = getattr(request, "user_id", None) or getattr(
+            getattr(request, "user", None), "id", None
+        )
+        if not user_id:
+            return Response(
+                {"error": "No se pudo identificar al usuario autenticado."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        # --- 2. Leer filtros de query string ---
+        qp = request.query_params
+
+        tipo = (qp.get("tipo") or qp.get("accion") or "").strip()
+        anio_str = (qp.get("anio") or qp.get("year") or "").strip()
+        mes_str = (qp.get("mes") or qp.get("month") or "").strip()
+
+        anio = None
+        mes = None
+
+        if anio_str:
+            if not anio_str.isdigit():
+                return Response(
+                    {"error": "El parámetro 'anio/year' debe ser numérico (YYYY)."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            anio = int(anio_str)
+
+        if mes_str:
+            if not mes_str.isdigit():
+                return Response(
+                    {"error": "El parámetro 'mes/month' debe ser numérico (1-12)."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            mes = int(mes_str)
+            if mes < 1 or mes > 12:
+                return Response(
+                    {"error": "El parámetro 'mes/month' debe estar entre 1 y 12."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if not anio:
+                return Response(
+                    {
+                        "error": (
+                            "Si filtras por mes, también debes indicar el año "
+                            "('anio' o 'year')."
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        # --- 3. Construir SQL dinámico con filtros ---
+        where_clauses = ["t.usuario_id = %s"]
+        params = [user_id]
+
+        if tipo:
+            where_clauses.append("t.accion = %s")
+            params.append(tipo)
+
+        if anio is not None:
+            where_clauses.append("EXTRACT(YEAR FROM t.fecha) = %s")
+            params.append(anio)
+
+        if mes is not None:
+            where_clauses.append("EXTRACT(MONTH FROM t.fecha) = %s")
+            params.append(mes)
+
+        where_sql = " AND ".join(where_clauses)
+
+        query = f"""
+            SELECT
+                t.id,
+                t.inventario_id,
+                t.fecha,
+                t.accion,
+                t.detalle,
+                t.usuario_id,
+                t.meta,
+                ii.inventario AS numero_inventario,
+                ii.descripcion AS descripcion_item
+            FROM inventario_trazabilidad t
+            LEFT JOIN inventario_items ii
+                   ON t.inventario_id = ii.id
+            WHERE {where_sql}
+            ORDER BY t.fecha DESC, t.id DESC
+        """
+
+        # --- 4. Ejecutar consulta ---
+        resultados = []
+        with connection.cursor() as cursor:
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+
+        # --- 5. Formatear respuesta ---
+        for (
+            traza_id,
+            inventario_id,
+            fecha,
+            accion,
+            detalle,
+            usuario_id_db,
+            meta_json,
+            numero_inventario,
+            descripcion_item,
+        ) in rows:
+            try:
+                meta = json.loads(meta_json) if meta_json else {}
+            except Exception:
+                meta = {"_raw": meta_json}
+
+            resultados.append(
+                {
+                    "id": traza_id,
+                    "inventario_id": inventario_id,
+                    "numero_inventario": numero_inventario,
+                    "descripcion_item": descripcion_item,
+                    "fecha": fecha.isoformat() if hasattr(fecha, "isoformat") else str(fecha),
+                    "accion": accion,
+                    "detalle": detalle,
+                    "usuario_id": usuario_id_db,
+                    "meta": meta,
+                }
+            )
+
+        return Response(
+            {
+                "filtros_aplicados": {
+                    "tipo": tipo or None,
+                    "anio": anio,
+                    "mes": mes,
+                },
+                "total": len(resultados),
+                "resultados": resultados,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    except Exception as e:
+        return Response(
+            {"error": f"Error al consultar la trazabilidad: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+@api_view(["GET"])
+@login_required_api
+def consultar_trazabilidad_usuario(request):
+    """
+    Endpoint para DIRECTORES:
+    Permite consultar la trazabilidad de cualquier usuario, con filtros opcionales:
+    - usuario_id o usuario_nombre (obligatorio UNO de los dos)
+    - tipo: baja | prestamo | traslado
+    - year: año numérico (ej. 2025)
+    - month: mes numérico (1-12)
+    """
+
+    try:
+        # ---------- 1. Verificar que el solicitante sea DIRECTOR ----------
+        requester_id = getattr(request, "user_id", None) or getattr(
+            getattr(request, "user", None), "id", None
+        )
+
+        if not requester_id:
+            return Response(
+                {"error": "No se pudo determinar el usuario autenticado."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT rol FROM usuarios WHERE id = %s", [requester_id])
+            row = cursor.fetchone()
+
+        if not row or (row[0] or "").lower() != "director":
+            return Response(
+                {
+                    "error": (
+                        "Solo los usuarios con rol 'director' pueden consultar "
+                        "la trazabilidad de otros usuarios."
+                    )
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # ---------- 2. Determinar el usuario objetivo ----------
+        usuario_id_param = (request.GET.get("usuario_id") or "").strip()
+        usuario_nombre_param = (request.GET.get("usuario_nombre") or "").strip()
+
+        if not usuario_id_param and not usuario_nombre_param:
+            return Response(
+                {
+                    "error": (
+                        "Debes indicar 'usuario_id' o 'usuario_nombre' "
+                        "para consultar su trazabilidad."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        target_user_id = None
+        target_user_name = None
+
+        with connection.cursor() as cursor:
+            if usuario_id_param:
+                # Buscar por id
+                try:
+                    target_user_id = int(usuario_id_param)
+                except ValueError:
+                    return Response(
+                        {"error": "El parámetro 'usuario_id' debe ser numérico."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                cursor.execute(
+                    "SELECT nombre FROM usuarios WHERE id = %s",
+                    [target_user_id],
+                )
+                row = cursor.fetchone()
+                if not row:
+                    return Response(
+                        {
+                            "error": (
+                                "No existe un usuario con el 'usuario_id' indicado."
+                            )
+                        },
+                        status=status.HTTP_404_NOT_FOUND,
+                    )
+                target_user_name = row[0]
+
+            else:
+                # Buscar por nombre (case-insensitive)
+                cursor.execute(
+                    """
+                    SELECT id, nombre
+                    FROM usuarios
+                    WHERE LOWER(nombre) = LOWER(%s)
+                    """,
+                    [usuario_nombre_param],
+                )
+                rows = cursor.fetchall()
+
+                if not rows:
+                    return Response(
+                        {
+                            "error": (
+                                "No se encontró ningún usuario con ese 'usuario_nombre'."
+                            )
+                        },
+                        status=status.HTTP_404_NOT_FOUND,
+                    )
+
+                if len(rows) > 1:
+                    return Response(
+                        {
+                            "error": (
+                                "Existen varios usuarios con ese nombre. "
+                                "Por favor utiliza 'usuario_id'."
+                            ),
+                            "coincidencias": [r[1] for r in rows],
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                target_user_id, target_user_name = rows[0]
+
+        # ---------- 3. Filtros opcionales ----------
+        tipo_param = (request.GET.get("tipo") or "").strip().lower()
+        year_param = (request.GET.get("year") or "").strip()
+        month_param = (request.GET.get("month") or "").strip()
+
+        sql = """
+            SELECT
+                it.id,
+                it.fecha,
+                it.accion,
+                it.detalle,
+                it.meta,
+                ii.inventario
+            FROM inventario_trazabilidad it
+            LEFT JOIN inventario_items ii ON it.inventario_id = ii.id
+            WHERE it.usuario_id = %s
+        """
+        params = [target_user_id]
+
+        # Filtro por tipo (baja | prestamo | traslado)
+        if tipo_param:
+            acciones = TIPO_ACCION_MAP.get(tipo_param)
+            if not acciones:
+                return Response(
+                    {
+                        "error": (
+                            "Valor de 'tipo' inválido. Usa: baja, prestamo o traslado."
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if len(acciones) == 1:
+                sql += " AND it.accion = %s"
+                params.append(acciones[0])
+            else:
+                placeholders = ",".join(["%s"] * len(acciones))
+                sql += f" AND it.accion IN ({placeholders})"
+                params.extend(acciones)
+
+        # Filtro por año
+        if year_param:
+            try:
+                year_int = int(year_param)
+            except ValueError:
+                return Response(
+                    {"error": "El parámetro 'year' debe ser numérico."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            sql += " AND EXTRACT(YEAR FROM it.fecha) = %s"
+            params.append(year_int)
+
+        # Filtro por mes
+        if month_param:
+            try:
+                month_int = int(month_param)
+            except ValueError:
+                return Response(
+                    {"error": "El parámetro 'month' debe ser numérico."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if not (1 <= month_int <= 12):
+                return Response(
+                    {
+                        "error": (
+                            "El parámetro 'month' debe estar entre 1 y 12 (enero–diciembre)."
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            sql += " AND EXTRACT(MONTH FROM it.fecha) = %s"
+            params.append(month_int)
+
+        sql += " ORDER BY it.fecha DESC"
+
+        # ---------- 4. Ejecutar consulta ----------
+        with connection.cursor() as cursor:
+            cursor.execute(sql, params)
+            rows = cursor.fetchall()
+
+        historial = []
+        for tz_id, fecha, accion, detalle, meta_json, inventario_num in rows:
+            try:
+                meta = json.loads(meta_json) if meta_json else None
+            except json.JSONDecodeError:
+                meta = meta_json  # dejamos el texto crudo si está malformado
+
+            historial.append(
+                {
+                    "id": tz_id,
+                    "fecha": fecha.isoformat() if fecha else None,
+                    "accion": accion,
+                    "detalle": detalle,
+                    "inventario": inventario_num,
+                    "meta": meta,
+                    "usuario_id": target_user_id,
+                    "usuario_nombre": target_user_name,
+                }
+            )
+
+        return Response(
+            {
+                "usuario_id": target_user_id,
+                "usuario_nombre": target_user_name,
+                "total_registros": len(historial),
+                "resultados": historial,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    except Exception as e:
+        return Response(
+            {"error": f"Error al consultar la trazabilidad de usuario: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
