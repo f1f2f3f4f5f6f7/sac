@@ -15,7 +15,7 @@ import { DialogModule } from 'primeng/dialog';
 import { SelectButtonModule } from 'primeng/selectbutton';
 import { MessageModule } from 'primeng/message';
 import { FILEEVENTUPLOAD } from '../../../models/fileEvent.model';
-import { Subject, takeUntil } from 'rxjs';
+import { of, Subject, switchMap, takeUntil, tap } from 'rxjs';
 
 @Component({
   selector: 'app-dashboard',
@@ -61,9 +61,34 @@ export class Dashboard implements OnInit, OnDestroy {
   ) {}
 
   ngOnInit() {
-    this.inventaryServices.inventary$.pipe(takeUntil(this.$destroy)).subscribe((data) => {
-      this.inventario = data;
-    });
+    this.inventaryServices.inventary$
+      .pipe(
+        takeUntil(this.$destroy),
+        switchMap((data) => {
+          if (data.length === 0) {
+            return this.inventaryServices.getInventary().pipe(
+              tap((data) => {
+                this.inventaryServices.inventary = data;
+              })
+            );
+          }
+          return of(data);
+        })
+      )
+      .subscribe({
+        next: (data) => {
+          this.inventario = data;
+          console.log(data);
+          
+        },
+        error: () => {
+          this.messageService.add({
+            severity: 'error',
+            summary: 'Error',
+            detail: 'Error al cargar el inventario',
+          });
+        },
+      });
   }
 
   onSubmit(category: string) {

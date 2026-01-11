@@ -18,20 +18,19 @@ export const routes: Routes = [
         path: '',
         loadComponent: () =>
           import('./core/components/pages/dashboard/dashboard').then((m) => m.Dashboard),
-        resolve: {
-          inventary: () => inject(InventaryService).getInventary()
-        }
       },
-    {
-      path: 'rendicion',
-      canActivate: [authGuard],
-      loadComponent: () => import('./core/components/pages/rendicion/rendicion').then((m) => m.Rendicion)
-    },
-    {
-      path: 'busqueda',
-      canActivate: [authGuard],
-      loadComponent: () => import('./core/components/pages/busqueda/busqueda').then((m) => m.Busqueda)
-    }
+      {
+        path: 'rendicion',
+        canActivate: [authGuard],
+        loadComponent: () =>
+          import('./core/components/pages/rendicion/rendicion').then((m) => m.Rendicion),
+      },
+      {
+        path: 'busqueda',
+        canActivate: [authGuard],
+        loadComponent: () =>
+          import('./core/components/pages/busqueda/busqueda').then((m) => m.Busqueda),
+      },
     ],
   },
 ];

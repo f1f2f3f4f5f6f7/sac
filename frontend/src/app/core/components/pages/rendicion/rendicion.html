@@ -124,6 +124,7 @@
               [(ngModel)]="selectedBuilding"
               [options]="edificios"
               [invalid]="building.invalid && (building.touched || exampleForm.submitted)"
+              ]
               optionLabel="name"
               placeholder="Seleccionar edificio"
               class="w-full"
@@ -135,7 +136,38 @@
             >
             }
           </div>
-          <button pButton type="submit" [disabled]="!(exampleForm.valid && retake)">
+          <div class="flex flex-col gap-1">
+            <p-inputnumber
+              required
+              #room="ngModel"
+              name="salon"
+              [(ngModel)]="salon"
+              [useGrouping]="false"
+              size="small"
+              placeholder="Salón"
+            />
+            @if (room.invalid && (room.touched || exampleForm.submitted)) {
+            <p-message severity="error" size="small" variant="simple">Salón es requerido.</p-message>
+            }
+          </div>
+          <div class="flex flex-col gap-1">
+            <textarea
+              pTextarea
+              required
+              #obs="ngModel"
+              name="observations"
+              [(ngModel)]="observations"
+              pSize="small"
+              placeholder="Observaciones"
+              rows="3"
+            ></textarea>
+            @if (obs.invalid && (obs.touched || exampleForm.submitted)) {
+            <p-message severity="error" size="small" variant="simple"
+              >Observaciones es requerido.</p-message
+            >
+            }
+          </div>
+          <button pButton type="submit" [disabled]="!(exampleForm.valid && retake && observations && salon)">
             <span pButtonLabel>Enviar</span>
           </button>
         </form>

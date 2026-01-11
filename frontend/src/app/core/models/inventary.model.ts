@@ -9,11 +9,15 @@ export interface IInventaryItem {
     inventoried: boolean;
     marca: string;
     recibido_por: string;
-    ubicacion: string;
+    ubicacion: number;
+    observations: string
+    salon: string;
     valor: number;
     foto: string
 }
 
+
+export type IInvetaryItemToInventoried = Pick<IInventaryItem, 'inventario' | 'inventoried' | 'observations' | 'ubicacion' | 'salon'>;
 
 export interface IBusquedaGeneralResult {
     inventario: string;

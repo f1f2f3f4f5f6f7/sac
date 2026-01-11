@@ -1,8 +1,8 @@
-import { Component, OnDestroy, OnInit, ViewChild, viewChild } from '@angular/core';
+import { Component, input, OnDestroy, OnInit, ViewChild, viewChild } from '@angular/core';
 import { MessageService, SelectItem } from 'primeng/api';
 import { InventaryService } from '../../../services/inventary/inventary.service';
-import { Subject, takeUntil } from 'rxjs';
-import { IInventaryItem } from '../../../models/inventary.model';
+import { of, Subject, switchMap, takeUntil, tap } from 'rxjs';
+import { IInventaryItem, IInvetaryItemToInventoried } from '../../../models/inventary.model';
 import { DataView } from 'primeng/dataview';
 import { ButtonModule } from 'primeng/button';
 import { SelectModule } from 'primeng/select';
@@ -18,6 +18,10 @@ import { BarcodeReader } from '../../../utils/barcode-reader/barcode-reader';
 import { ProgressSpinnerModule } from 'primeng/progressspinner';
 import { MessageModule } from 'primeng/message';
 import { ToastModule } from 'primeng/toast';
+import { TextareaModule } from 'primeng/textarea';
+import { InputNumber } from 'primeng/inputnumber';
+import { IBuilding } from '../../../models/buildingModel';
+import { BuildingService } from '../../../services/buildings/building.service';
 
 @Component({
   selector: 'app-rendicion',
@@ -37,6 +41,8 @@ import { ToastModule } from 'primeng/toast';
     DialogModule,
     MessageModule,
     ToastModule,
+    TextareaModule,
+    InputNumber,
   ],
   templateUrl: './rendicion.html',
   styleUrl: './rendicion.scss',
@@ -44,13 +50,15 @@ import { ToastModule } from 'primeng/toast';
   standalone: true,
 })
 export class Rendicion implements OnInit, OnDestroy {
-  selectedBuilding!: object;
+  selectedBuilding!: IBuilding;
+
   edificios: any[] = [
     {
       name: 'Edificio A',
       value: 'edificio_a',
     },
   ];
+
   inventario: IInventaryItem[] = [];
   selectedItem!: IInventaryItem | null;
   visible: boolean = false;
@@ -58,6 +66,8 @@ export class Rendicion implements OnInit, OnDestroy {
   sortOrder!: number;
   sortField!: string;
   retake: boolean = false;
+  observations!: string;
+  salon: number | undefined;
 
   @ViewChild('dv') dv!: DataView;
 
@@ -74,20 +84,62 @@ export class Rendicion implements OnInit, OnDestroy {
 
   constructor(
     private messageService: MessageService,
-    private inventaryServices: InventaryService
+    private inventaryServices: InventaryService,
+    private buildingService: BuildingService
   ) {}
 
   ngOnInit() {
-    this.inventaryServices.inventary$.pipe(takeUntil(this.$destroy)).subscribe((data) => {
-      this.inventario = data;
-      this.inventario.forEach((item) => (item.inventoried = Math.random() < 0.5));
-      console.log(data);
-    });
+    this.inventaryServices.inventary$
+      .pipe(
+        takeUntil(this.$destroy),
+        switchMap((data) => {
+          if (data.length === 0) {
+            return this.inventaryServices.getInventary().pipe(
+              tap((data) => {
+                this.inventaryServices.inventary = data;
+              })
+            );
+          }
+          return of(data);
+        })
+      )
+      .subscribe({
+        next: (data) => {
+          this.inventario = data;
+        },
+        error: () => {
+          this.errorMessage('Error al cargar el inventario');
+        },
+      });
+
+    this.buildingService.buildings$
+      .pipe(
+        takeUntil(this.$destroy),
+        switchMap((data) => {
+          if (data.length === 0) {
+            return this.buildingService.getBuildings();
+          }
+          return of(data);
+        })
+      )
+      .subscribe({
+        next: (data: any) => {
+          this.edificios = data.map((building: any) => ({
+            name: building.edificio,
+            value: building.id,
+          }));
+        },
+        error: () => {
+          this.errorMessage('Error al cargar los edificios');
+        },
+      });
+
     this.sortOptions = [
       { label: 'Inventariados', value: true },
       { label: 'No inventariados', value: false },
     ];
   }
+
   onSortChange(e: any) {
     this.sortField = 'inventoried';
     this.sortOrder = e.value === true ? -1 : 1;
@@ -166,23 +218,76 @@ export class Rendicion implements OnInit, OnDestroy {
     this.video.pause();
   }
 
-  onSubmit(form: NgForm) {
-    console.log(form.valid);
-
+  async onSubmit(form: NgForm) {
     if (form.valid && this.retake) {
-      console.log(this.selectedBuilding);
-      this.canvas.toBlob((blob) => {
+      const file = await this.canvasToFile(this.canvas);
+      const inventario = this.selectedItem?.inventario || '';
+      const inventaryObject: IInvetaryItemToInventoried = {
+        inventario: inventario,
+        inventoried: true,
+        observations: this.observations,
+        ubicacion: this.selectedBuilding.value,
+        salon: this.salon?.toString() || '',
+      };
+      this.closeDialog();
+      this.inventaryServices.updateItem(inventaryObject, file).subscribe({
+        next: (res: any) => {
+          this.inventario = this.inventario.map((item) => {
+            if (item.inventario !== inventario) return item;
+            console.log(inventaryObject);
+            
+            return {
+              ...item,
+              inventoried: true,
+              observations: inventaryObject.observations,
+              ubicacion: this.getUbicationName(inventaryObject.ubicacion),
+              salon: inventaryObject.salon,
+              imagen_url: res.foto_url,
+            };
+          });
+          this.messageService.add({
+            severity: 'success',
+            summary: 'Éxito',
+            detail: 'Inventario actualizado correctamente',
+          });
+          this.inventaryServices.inventary = this.inventario;
+          console.log(this.inventario);
+        },
+        error: (err) => this.errorMessage('Error al actualizar el inventario'),
+      });
+
+      form.resetForm();
+    }
+  }
+
+  canvasToFile(canvas: HTMLCanvasElement): Promise<File> {
+    return new Promise((resolve, reject) => {
+      canvas.toBlob((blob) => {
         if (!blob) {
+          reject('No se pudo generar el blob');
           return;
         }
         const file = new File([blob], 'foto.png', { type: 'image/png' });
+        resolve(file);
       }, 'image/png');
-      form.resetForm();
-    }
+    });
   }
 
   ngOnDestroy(): void {
     this.$destroy.next();
     this.$destroy.complete();
+  }
+
+  getUbicationName(id: number){
+    const building = this.edificios.find(b => b.value === id);
+    return building ? building.name : 'Desconocido';
+  }
+
+  errorMessage(message: string) {
+    this.messageService.add({
+      severity: 'error',
+      summary: 'Error',
+      detail: message,
+    });
   }
 }
