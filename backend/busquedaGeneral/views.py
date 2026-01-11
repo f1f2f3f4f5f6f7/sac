@@ -69,3 +69,39 @@ def buscar_inventario(request):
             {"error": f"Error al buscar inventario: {str(e)}"},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+
+
+@api_view(["GET"])
+@login_required_api
+def listar_edificios(request):
+    """
+    Retorna una lista de todos los edificios disponibles.
+    """
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT 
+                    id,
+                    edificio
+                FROM edificios
+                ORDER BY edificio
+            """)
+            
+            rows = cursor.fetchall()
+            
+            # Construir lista de diccionarios
+            columns = [col[0] for col in cursor.description]
+            edificios = [dict(zip(columns, row)) for row in rows]
+            
+            return Response({
+                "success": True,
+                "edificios": edificios,
+                "total": len(edificios)
+            }, status=status.HTTP_200_OK)
+            
+    except Exception as e:
+        return Response(
+            {"error": f"Error al obtener edificios: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
