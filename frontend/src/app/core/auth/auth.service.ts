@@ -1,7 +1,7 @@
 import { HttpClient } from '@angular/common/http';
 import { inject, Injectable } from '@angular/core';
 import { UserLogin, UserWithToken } from '../models/user.model';
-import { BehaviorSubject, ignoreElements, map, Observable, tap } from 'rxjs';
+import { BehaviorSubject, ignoreElements, map, Observable, tap, take } from 'rxjs';
 import { Router } from '@angular/router';
 
 const url = 'http://localhost:8000/api/accounts';
@@ -54,6 +54,17 @@ export class AuthService {
   }
 
   redirectTo(): void {
-    this.router.navigateByUrl('/');
+    this.user$
+      .pipe(
+        take(1),
+        tap((user) => {
+          if (user?.rol === 'director') {
+            this.router.navigateByUrl('/director');
+          } else {
+            this.router.navigateByUrl('/profesor');
+          }
+        })
+      )
+      .subscribe();
   }
 }

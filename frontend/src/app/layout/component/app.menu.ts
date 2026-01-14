@@ -1,8 +1,11 @@
-import { Component } from '@angular/core';
+import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterModule } from '@angular/router';
 import { MenuItem } from 'primeng/api';
 import { AppMenuitem } from './app.menuitem';
+import { AuthService } from '../../core/auth/auth.service';
+import {map} from 'rxjs';
+
 
 @Component({
     selector: 'app-menu',
@@ -15,22 +18,40 @@ import { AppMenuitem } from './app.menuitem';
         </ng-container>
     </ul> `
 })
-export class AppMenu {
+export class AppMenu implements OnInit {
     model: MenuItem[] = [];
 
+    constructor(private authService: AuthService) {}
+
     ngOnInit() {
-        this.model = [
-            {
-                label: 'Home',
-                items: [{ label: 'Dashboard', icon: 'pi pi-fw pi-home', routerLink: ['/'] }]
-            },
-            {
-                label: 'Actividades',
-                items: [
-                    { label: 'Rendición de Inventarío', icon: 'pi pi-fw pi-id-card', routerLink: ['/rendicion'] },
-                    { label: 'Busqueda General', icon: 'pi pi-fw pi-search', routerLink: ['/busqueda'] },
-                ]
-            }
+        this.authService.user$.pipe(
+            map((user) => {
+                if (user?.rol === 'director') {
+                    this.model = [
+                        {
+                            label: 'Home',
+                            items: [{ label: 'Usuarios', icon: 'pi pi-fw pi-users', routerLink: ['/director'] }]
+                        },
+                        // Agrega aquí las opciones específicas para el director
+                    ];
+                }else{
+                    this.model = [
+                        {
+                            label: 'Home',
+                            items: [{ label: 'Dashboard', icon: 'pi pi-fw pi-home', routerLink: ['/profesor'] }]
+                        },
+                        {
+                            label: 'Actividades',
+                            items: [
+                                { label: 'Rendición de Inventarío', icon: 'pi pi-fw pi-id-card', routerLink: ['/profesor/rendicion'] },
+                                { label: 'Busqueda General', icon: 'pi pi-fw pi-search', routerLink: ['/profesor/busqueda'] },
+                            ]
+                        }
+                    ];
+                }
+            })
+        ).subscribe();
+            
 /*             {
                 label: 'Pages',
                 icon: 'pi pi-fw pi-briefcase',
@@ -139,6 +160,6 @@ export class AppMenu {
                     }
                 ]
             } */
-        ];
+        
     }
 }
