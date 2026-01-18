@@ -345,16 +345,17 @@ def solicitud_baja(request):
                 cursor.execute(
                     """
                     INSERT INTO inventario_trazabilidad
-                        (inventario_id, fecha, accion, detalle, usuario_id, meta)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                        (inventario_id, fecha, accion, detalle, usuario_id, meta, estado)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                     """,
                     [
                         inventario_pk,
                         now_ts,
-                        "BAJA_SOLICITADA",
+                        "baja",
                         motivo,
-                        request.user_id,  # viene del decorador login_required_api
+                        request.user_id,
                         json.dumps(meta_dict),
+                        "pendiente",   # ✅ NUEVO
                     ],
                 )
 
@@ -704,6 +705,7 @@ def solicitud_prestamo(request):
                     detalle,
                     user_id,
                     json.dumps(meta, ensure_ascii=False),
+                    "pendiente",  # ✅ NUEVO
                 )
             )
 
@@ -712,11 +714,12 @@ def solicitud_prestamo(request):
                 cursor.executemany(
                     """
                     INSERT INTO inventario_trazabilidad
-                        (inventario_id, fecha, accion, detalle, usuario_id, meta)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                        (inventario_id, fecha, accion, detalle, usuario_id, meta, estado)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                     """,
                     trazas,
                 )
+
 
         # -------- 11. Respuesta --------
         response = HttpResponse(
@@ -1060,10 +1063,11 @@ def solicitud_traslado(request):
                 (
                     inventario_pk,
                     ahora,
-                    "TRASLADO_SOLICITADO",
+                    "traslado",
                     detalle,
                     user_id,
                     json.dumps(meta, ensure_ascii=False),
+                    "pendiente",  # ✅ NUEVO
                 )
             )
 
@@ -1072,11 +1076,12 @@ def solicitud_traslado(request):
                 cursor.executemany(
                     """
                     INSERT INTO inventario_trazabilidad
-                        (inventario_id, fecha, accion, detalle, usuario_id, meta)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                        (inventario_id, fecha, accion, detalle, usuario_id, meta, estado)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                     """,
                     trazas,
                 )
+
 
         # -------- 10. Responder con el archivo --------
         response = HttpResponse(
@@ -1101,21 +1106,19 @@ def historial_trazabilidad(request):
     Parámetros (query string):
 
     - tipo / accion (opcional): filtra por tipo de movimiento (columna 'accion')
-        Ejemplos de valores según tu implementación actual:
-            - "BAJA_SOLICITADA"
-            - "Prestamo"
-            - "TRASLADO_SOLICITADO"
-
     - anio / year (opcional): filtrar por año (YYYY)
     - mes / month (opcional): si se envía junto con el año, filtra por año + mes (1–12)
+    - estado (opcional): filtra por estado de la traza (columna 'estado' en inventario_trazabilidad)
+        Valores permitidos: "pendiente" | "completado" (case-insensitive)
 
     Ejemplos:
-        /api/movimientos/consultar_trazabilidad/                -> todo el historial del usuario
-        /api/movimientos/consultar_trazabilidad/?anio=2025      -> todo 2025
-        /api/movimientos/consultar_trazabilidad/?anio=2025&mes=3 -> marzo 2025
-        /api/movimientos/consultar_trazabilidad/?tipo=Prestamo  -> solo préstamos
+        /api/movimientos/consultar_trazabilidad/
+        /api/movimientos/consultar_trazabilidad/?anio=2025
+        /api/movimientos/consultar_trazabilidad/?anio=2025&mes=3
+        /api/movimientos/consultar_trazabilidad/?tipo=Prestamo
+        /api/movimientos/consultar_trazabilidad/?estado=pendiente
+        /api/movimientos/consultar_trazabilidad/?tipo=traslado&estado=completado
     """
-
     try:
         # --- 1. Identificar usuario actual ---
         user_id = getattr(request, "user_id", None) or getattr(
@@ -1133,6 +1136,9 @@ def historial_trazabilidad(request):
         tipo = (qp.get("tipo") or qp.get("accion") or "").strip()
         anio_str = (qp.get("anio") or qp.get("year") or "").strip()
         mes_str = (qp.get("mes") or qp.get("month") or "").strip()
+
+        # ✅ NUEVO: estado
+        estado = (qp.get("estado") or "").strip().lower()
 
         anio = None
         mes = None
@@ -1168,6 +1174,18 @@ def historial_trazabilidad(request):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
+        # ✅ Validación de estado
+        if estado:
+            estados_validos = {"pendiente", "completado"}
+            if estado not in estados_validos:
+                return Response(
+                    {
+                        "error": "El parámetro 'estado' debe ser 'pendiente' o 'completado'.",
+                        "estado_recibido": estado,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
         # --- 3. Construir SQL dinámico con filtros ---
         where_clauses = ["t.usuario_id = %s"]
         params = [user_id]
@@ -1184,6 +1202,11 @@ def historial_trazabilidad(request):
             where_clauses.append("EXTRACT(MONTH FROM t.fecha) = %s")
             params.append(mes)
 
+        # ✅ Aplicar filtro por estado (case-insensitive)
+        if estado:
+            where_clauses.append("LOWER(t.estado) = %s")
+            params.append(estado)
+
         where_sql = " AND ".join(where_clauses)
 
         query = f"""
@@ -1195,6 +1218,7 @@ def historial_trazabilidad(request):
                 t.detalle,
                 t.usuario_id,
                 t.meta,
+                t.estado,                           -- ✅ NUEVO: devolver estado
                 ii.inventario AS numero_inventario,
                 ii.descripcion AS descripcion_item
             FROM inventario_trazabilidad t
@@ -1219,6 +1243,7 @@ def historial_trazabilidad(request):
             detalle,
             usuario_id_db,
             meta_json,
+            estado_db,            # ✅ NUEVO
             numero_inventario,
             descripcion_item,
         ) in rows:
@@ -1235,6 +1260,7 @@ def historial_trazabilidad(request):
                     "descripcion_item": descripcion_item,
                     "fecha": fecha.isoformat() if hasattr(fecha, "isoformat") else str(fecha),
                     "accion": accion,
+                    "estado": estado_db,  # ✅ NUEVO
                     "detalle": detalle,
                     "usuario_id": usuario_id_db,
                     "meta": meta,
@@ -1247,6 +1273,7 @@ def historial_trazabilidad(request):
                     "tipo": tipo or None,
                     "anio": anio,
                     "mes": mes,
+                    "estado": estado or None,  # ✅ NUEVO
                 },
                 "total": len(resultados),
                 "resultados": resultados,
@@ -1259,6 +1286,7 @@ def historial_trazabilidad(request):
             {"error": f"Error al consultar la trazabilidad: {str(e)}"},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
+
 
 @api_view(["GET"])
 @login_required_api
@@ -1493,5 +1521,121 @@ def consultar_trazabilidad_usuario(request):
     except Exception as e:
         return Response(
             {"error": f"Error al consultar la trazabilidad de usuario: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+@api_view(["GET"])
+@login_required_api
+def trazabilidad_por_elemento(request):
+    """
+    Consulta la trazabilidad histórica de UN elemento por número de inventario.
+    Incluye movimientos hechos por cualquier usuario.
+    Ordena por fecha ASC (del más antiguo al más reciente).
+
+    Query params:
+      - inventario (obligatorio): número de inventario del elemento (ej: 166718)
+
+    Ejemplo:
+      /api/movimientos/trazabilidad_elemento/?inventario=166718
+    """
+    try:
+        qp = request.query_params
+        inventario_num = (qp.get("inventario") or "").strip()
+
+        if not inventario_num:
+            return Response(
+                {"error": "Debes enviar el parámetro 'inventario' (número de inventario)."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 1) Encontrar el item por número de inventario
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, inventario, descripcion
+                FROM inventario_items
+                WHERE inventario = %s
+                """,
+                [inventario_num],
+            )
+            item = cursor.fetchone()
+
+        if not item:
+            return Response(
+                {
+                    "error": "No existe un elemento con ese número de inventario.",
+                    "inventario": inventario_num,
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        item_id, inv_db, descripcion_item = item
+
+        # 2) Traer trazabilidad del item (sin filtrar por usuario)
+        query = """
+            SELECT
+                t.id,
+                t.inventario_id,
+                t.fecha,
+                t.accion,
+                t.detalle,
+                t.usuario_id,
+                t.meta,
+                u.nombre as usuario_nombre
+            FROM inventario_trazabilidad t
+            LEFT JOIN usuarios u ON u.id = t.usuario_id
+            WHERE t.inventario_id = %s
+            ORDER BY t.fecha ASC, t.id ASC
+        """
+
+        resultados = []
+        with connection.cursor() as cursor:
+            cursor.execute(query, [item_id])
+            rows = cursor.fetchall()
+
+        for (
+            traza_id,
+            inventario_id,
+            fecha,
+            accion,
+            detalle,
+            usuario_id,
+            meta_json,
+            usuario_nombre,
+        ) in rows:
+            try:
+                meta = json.loads(meta_json) if meta_json else {}
+            except Exception:
+                meta = {"_raw": meta_json}
+
+            resultados.append(
+                {
+                    "id": traza_id,
+                    "inventario_id": inventario_id,
+                    "fecha": fecha.isoformat() if hasattr(fecha, "isoformat") else str(fecha),
+                    "accion": accion,
+                    "detalle": detalle,
+                    "usuario_id": usuario_id,
+                    "usuario_nombre": usuario_nombre,
+                    "meta": meta,
+                }
+            )
+
+        return Response(
+            {
+                "elemento": {
+                    "inventario_id": item_id,
+                    "numero_inventario": str(inv_db),
+                    "descripcion_item": descripcion_item,
+                },
+                "total": len(resultados),
+                "resultados": resultados,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    except Exception as e:
+        return Response(
+            {"error": f"Error al consultar trazabilidad por elemento: {str(e)}"},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
