@@ -57,6 +57,13 @@
           <td>{{ user.escuela?.nombre || 'Sin escuela' }}</td>
           <td>
             <button pButton 
+                    icon="pi pi-pencil"
+                    class="p-button-rounded p-button-info p-button-text mr-2"
+                    (click)="openEdit(user)"
+                    pTooltip="Editar usuario"
+                    tooltipPosition="top">
+            </button>
+            <button pButton 
                     icon="pi pi-trash"
                     class="p-button-rounded p-button-danger p-button-text"
                     (click)="deleteUser(user)">
@@ -118,6 +125,47 @@
             [disabled]="saving"
             [loading]="saving"
             (click)="saveUser()"></button>
+  </ng-template>
+
+</p-dialog>
+
+
+<!-- MODAL EDITAR USUARIO -->
+<p-dialog header="Editar Usuario"
+          [(visible)]="editDialog"
+          [modal]="true"
+          [style]="{width:'420px'}">
+
+  <div class="form">
+    <div class="field">
+      <label>Nombre</label>
+      <input pInputText [(ngModel)]="editUser.nombre" [disabled]="true" />
+      <small class="text-muted">El nombre no se puede modificar</small>
+    </div>
+
+    <div class="field">
+      <label>Email</label>
+      <input pInputText type="email" [(ngModel)]="editUser.email" placeholder="email@ejemplo.com" />
+    </div>
+
+    <div class="field">
+      <label>Nueva Contraseña</label>
+      <p-password [(ngModel)]="editUser.password" [feedback]="false" placeholder="Dejar vacío para no cambiar" styleClass="w-full"></p-password>
+    </div>
+
+  </div>
+
+  <ng-template pTemplate="footer">
+    <button pButton label="Cancelar" 
+            class="p-button-text" 
+            [disabled]="updating"
+            (click)="editDialog=false"></button>
+
+    <button pButton label="Actualizar" 
+            class="p-button-primary" 
+            [disabled]="updating"
+            [loading]="updating"
+            (click)="updateUser()"></button>
   </ng-template>
 
 </p-dialog>

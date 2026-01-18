@@ -322,3 +322,84 @@ def delete_user_view(request):
 
 
 
+@login_required_api
+@require_http_methods(["POST"])
+def update_user_view(request):
+    """Actualizar usuario - permite actualizar email y/o password"""
+    try:
+        data = json.loads(request.body)
+        codigo = data.get('codigo', '').strip().upper()
+        email = data.get('email', '').strip().lower() if data.get('email') else None
+        password = data.get('password', '') if data.get('password') else None
+        
+        # Validar código
+        if not codigo:
+            return JsonResponse({'error': 'Código de usuario requerido'}, status=400)
+        if not re.match(r'^[A-Z0-9]+$', codigo):
+            return JsonResponse({'error': 'Código inválido'}, status=400)
+        
+        # Validar que al menos un campo para actualizar esté presente
+        if not email and not password:
+            return JsonResponse({'error': 'Debe proporcionar al menos un campo para actualizar (email o password)'}, status=400)
+        
+        # Validar email si se proporciona
+        if email and not validate_email(email):
+            return JsonResponse({'error': 'Email inválido'}, status=400)
+        
+        # Validar password si se proporciona
+        if password and len(password) < 6:
+            return JsonResponse({'error': 'Contraseña muy corta (mínimo 6 caracteres)'}, status=400)
+        
+        with connection.cursor() as cursor:
+            # Verificar que el usuario existe
+            cursor.execute("SELECT id FROM usuarios WHERE codigo = %s", (codigo,))
+            user = cursor.fetchone()
+            if not user:
+                return JsonResponse({'error': 'Usuario no encontrado'}, status=404)
+            
+            # Verificar que el email no esté en uso por otro usuario (si se está actualizando)
+            if email:
+                cursor.execute("SELECT id FROM usuarios WHERE email = %s AND codigo != %s", (email, codigo))
+                if cursor.fetchone():
+                    return JsonResponse({'error': 'Email ya está en uso por otro usuario'}, status=400)
+            
+            # Construir la consulta UPDATE dinámicamente
+            update_fields = []
+            update_values = []
+            
+            if email:
+                update_fields.append("email = %s")
+                update_values.append(email)
+            
+            if password:
+                hashed_password = hash_password(password)
+                update_fields.append("password_hash = %s")
+                update_values.append(hashed_password)
+            
+            # Agregar el código al final para el WHERE
+            update_values.append(codigo)
+            
+            # Ejecutar el UPDATE
+            update_query = f"UPDATE usuarios SET {', '.join(update_fields)} WHERE codigo = %s RETURNING id, codigo, nombre, email, rol"
+            cursor.execute(update_query, update_values)
+            updated_user = cursor.fetchone()
+            
+            if not updated_user:
+                return JsonResponse({'error': 'Error al actualizar el usuario'}, status=500)
+        
+        return JsonResponse({
+            'success': True,
+            'message': 'Usuario actualizado correctamente',
+            'user': {
+                'id': updated_user[0],
+                'codigo': updated_user[1],
+                'nombre': updated_user[2],
+                'email': updated_user[3],
+                'rol': updated_user[4]
+            }
+        })
+    
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'JSON inválido'}, status=400)
+    except Exception as e:
+        return JsonResponse({'error': 'Error interno', 'message': str(e)}, status=500)
