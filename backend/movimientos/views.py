@@ -15,6 +15,116 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
 from accounts.views import login_required_api
+import textwrap
+from openpyxl.utils import get_column_letter
+
+def _get_effective_width_chars(ws, coord: str) -> int:
+    """
+    Devuelve un ancho aproximado en 'caracteres' para la celda coord,
+    considerando celdas combinadas (merged). Excel mide column width ~ caracteres.
+    """
+    # Si está en un merged range, sumamos anchos de columnas del rango
+    for r in ws.merged_cells.ranges:
+        if coord in r:
+            min_col, min_row, max_col, max_row = r.bounds
+            total = 0.0
+            for c in range(min_col, max_col + 1):
+                letter = get_column_letter(c)
+                w = ws.column_dimensions[letter].width
+                if w is None:
+                    w = ws.sheet_format.defaultColWidth or 8.43
+                total += float(w)
+            return max(1, int(total))
+
+    # No merged: ancho de su columna
+    col_letter = "".join(ch for ch in coord if ch.isalpha())
+    w = ws.column_dimensions[col_letter].width
+    if w is None:
+        w = ws.sheet_format.defaultColWidth or 8.43
+    return max(1, int(w))
+
+
+def _count_wrapped_lines(value: str, width_chars: int) -> int:
+    """
+    Calcula cuántas líneas ocupará un texto envuelto (aprox) usando el ancho en 'caracteres'.
+    """
+    if value is None:
+        return 1
+    s = str(value)
+    if not s.strip():
+        return 1
+
+    width_chars = max(1, int(width_chars))
+    total_lines = 0
+
+    # respeta saltos de línea manuales
+    for paragraph in s.splitlines() or [""]:
+        wrapped = textwrap.wrap(
+            paragraph,
+            width=width_chars,
+            break_long_words=True,
+            replace_whitespace=False,
+            drop_whitespace=False,
+        )
+        total_lines += max(1, len(wrapped))
+
+    return max(1, total_lines)
+
+
+def autofit_row_height(
+    ws,
+    row: int,
+    cols=("B", "D"),
+    padding_chars=2,
+    max_height=300,
+):
+    """
+    Ajusta la altura de una fila según el contenido (wrap) en las columnas dadas.
+    Respeta la altura base del template.
+    """
+    base = ws.row_dimensions[row].height or ws.sheet_format.defaultRowHeight or 15
+
+    max_lines = 1
+    for col in cols:
+        coord = f"{col}{row}"
+        val = ws[coord].value
+        if val:
+            width = _get_effective_width_chars(ws, coord)
+            width = max(1, width - padding_chars)  # margen
+            lines = _count_wrapped_lines(val, width)
+            max_lines = max(max_lines, lines)
+
+    ws.row_dimensions[row].height = min(base * max_lines, max_height)
+
+def autofit_row_height_fixed(
+    ws,
+    row: int,
+    cols,
+    base_height: float = 15.0,
+    padding_chars: int = 2,
+    width_factor: float = 0.90,   # <- más conservador (evita subestimar líneas)
+    min_height: float | None = None,
+    max_height: float = 250.0,
+):
+    """
+    Auto-altura 'tipo Excel' aproximada:
+    - IGNORA la altura predefinida del template (clave para que no quede gigante la fila 22).
+    - Estima líneas por wrap y fija ws.row_dimensions[row].height.
+    """
+    max_lines = 1
+    for col in cols:
+        coord = f"{col}{row}"
+        val = ws[coord].value
+        if val:
+            width = _get_effective_width_chars(ws, coord)
+            width = max(1, int((width - padding_chars) * width_factor))
+            lines = _count_wrapped_lines(val, width)
+            max_lines = max(max_lines, lines)
+
+    height = base_height * max_lines
+    if min_height is None:
+        min_height = base_height
+    ws.row_dimensions[row].height = min(max(height, min_height), max_height)
 
 
 @api_view(["POST"])
@@ -33,7 +143,6 @@ def solicitud_baja(request):
         ]
     }
     """
-
     try:
         items = request.data.get("items")
         if not items or not isinstance(items, list):
@@ -65,7 +174,6 @@ def solicitud_baja(request):
         inventarios_unicos = list(dict.fromkeys(inventarios))  # preserva orden
 
         # --- 2. Consultar inventario_items + usuarios ---
-        # MUY IMPORTANTE: traemos también ii.id (PK) para usarlo en la trazabilidad
         with connection.cursor() as cursor:
             cursor.execute(
                 """
@@ -90,21 +198,20 @@ def solicitud_baja(request):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        # Mapear por número de inventario para mantener el orden del request
-        # y guardar también el id (PK) real.
+        # Mapear por inventario
         campos_por_inv = {}
-        responsables_ids = set()
         responsables_nombres = set()
 
         for (
-            inventario_pk,   # ii.id
-            inventario_num,  # ii.inventario
+            inventario_pk,
+            inventario_num,
             descripcion,
             categoria_id,
             recibido_por_id,
             usuario_nombre,
         ) in rows:
-            campos_por_inv[str(inventario_num)] = {
+            key = str(inventario_num)
+            campos_por_inv[key] = {
                 "id": inventario_pk,
                 "inventario": inventario_num,
                 "descripcion": descripcion,
@@ -112,15 +219,11 @@ def solicitud_baja(request):
                 "recibido_por_id": recibido_por_id,
                 "usuario_nombre": usuario_nombre,
             }
-            if recibido_por_id:
-                responsables_ids.add(recibido_por_id)
             if usuario_nombre:
                 responsables_nombres.add(usuario_nombre)
 
         # Verificar inventarios no encontrados
-        no_encontrados = [
-            inv for inv in inventarios_unicos if inv not in campos_por_inv
-        ]
+        no_encontrados = [inv for inv in inventarios_unicos if inv not in campos_por_inv]
         if no_encontrados:
             return Response(
                 {
@@ -135,8 +238,6 @@ def solicitud_baja(request):
             nombre_responsable = ""
         else:
             if len(responsables_nombres) > 1:
-                # El formato solo tiene un campo "De:", así que obligamos a que todos
-                # los ítems pertenezcan al mismo recibido_por_id.
                 return Response(
                     {
                         "error": (
@@ -167,63 +268,48 @@ def solicitud_baja(request):
         try:
             ws = wb["Table 1"]
         except KeyError:
-            ws = wb.active  # fallback, por si cambia el nombre de la hoja
+            ws = wb.active
 
         # --- 5. Rellenar cabecera ---
         hoy = date.today()
-        ws["B4"] = hoy.strftime("%d/%m/%Y")  # Fecha actual (merge B4:C4)
-        ws["C6"] = nombre_responsable        # Campo "De:" (merge C6:D6)
+        ws["B4"] = hoy.strftime("%d/%m/%Y")  # Fecha actual
+        ws["C6"] = nombre_responsable        # Campo "De:"
 
         # --- 6. Rellenar tablas de mayores y menores ---
-        fila_mayores = 9   # inicio de tabla de elementos MAYORES
-        fila_menores = 25  # inicio de tabla de elementos MENORES
+        fila_mayores = 9    # MAYORES inicia en 9
+        fila_menores = 20   # ✅ TU plantilla: MENORES inicia en 20 (no 25)
+
+        filas_usadas = []   # para ajustar alturas luego (opcional)
 
         for inv in inventarios_unicos:
             data = campos_por_inv[inv]
-            desc = data.get("descripcion", "")
+            desc = data.get("descripcion", "") or ""
             categoria = data.get("categoria_id", 0)
-            motivo = motivos_por_inv.get(inv, "")
+            motivo = motivos_por_inv.get(inv, "") or ""
 
             if categoria == 2:  # MAYORES
                 fila = fila_mayores
                 fila_mayores += 1
-            elif categoria == 1:  # MENORES
-                fila = fila_menores
-                fila_menores += 1
-            else:
-                # Categoría distinta -> por defecto, se manda a MENORES
+            else:               # MENORES (categoria 1 u otras)
                 fila = fila_menores
                 fila_menores += 1
 
-            ws[f"A{fila}"] = inv    # N° INV
-            ws[f"B{fila}"] = desc   # ELEMENTO (B-C unidas en plantilla)
-            ws[f"D{fila}"] = motivo # MOTIVO BAJA
+            # Escribir valores
+            ws[f"A{fila}"] = inv
+            ws[f"B{fila}"] = desc   # B:C está mergeado en el template
+            ws[f"D{fila}"] = motivo
 
-        # --- 6.1. Ajustar formato: texto envuelto y ancho de columnas ---
-        for row in range(9, fila_mayores):  # filas de MAYORES usadas
+            # Wrap + top
             for col in ("B", "D"):
-                cell = ws[f"{col}{row}"]
-                if cell.value:
-                    cell.alignment = Alignment(
-                        wrap_text=True,
-                        vertical="top",
-                    )
+                ws[f"{col}{fila}"].alignment = Alignment(wrap_text=True, vertical="top")
 
-        for row in range(25, fila_menores):  # filas de MENORES usadas
-            for col in ("B", "D"):
-                cell = ws[f"{col}{row}"]
-                if cell.value:
-                    cell.alignment = Alignment(
-                        wrap_text=True,
-                        vertical="top",
-                    )
+            # ✅ Ajuste de altura de la fila según contenido (sin tocar anchos)
+            autofit_row_height(ws, fila, cols=("B", "D"))
 
-        for col in ("B", "D"):
-            max_len = 0
-            for cell in ws[col]:
-                if cell.value:
-                    max_len = max(max_len, len(str(cell.value)))
-            ws.column_dimensions[col].width = min(max_len + 2, 80)
+            filas_usadas.append(fila)
+
+        # ❌ IMPORTANTE: ya NO ajustamos anchos de columnas para evitar estirar eje X
+        # (Elimina el bloque que calculaba ws.column_dimensions[col].width)
 
         # --- 7. Guardar en memoria y en servidor ---
         output = io.BytesIO()
@@ -242,12 +328,11 @@ def solicitud_baja(request):
                 f.write(output.getvalue())
 
         # --- 8. Registrar trazabilidad ---
-        # Usamos el id real de inventario_items (inventario_pk) en el campo inventario_id
         now_ts = timezone.now()
         with connection.cursor() as cursor:
             for inv in inventarios_unicos:
                 data = campos_por_inv[inv]
-                inventario_pk = data["id"]  # ESTE es el que apunta a inventario_items.id
+                inventario_pk = data["id"]
                 motivo = motivos_por_inv[inv]
 
                 meta_dict = {
@@ -268,7 +353,7 @@ def solicitud_baja(request):
                         now_ts,
                         "BAJA_SOLICITADA",
                         motivo,
-                        request.user_id,          # viene del decorador login_required_api
+                        request.user_id,  # viene del decorador login_required_api
                         json.dumps(meta_dict),
                     ],
                 )
@@ -276,9 +361,7 @@ def solicitud_baja(request):
         # --- 9. Responder al cliente con el archivo ---
         response = HttpResponse(
             output.getvalue(),
-            content_type=(
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            ),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
         response["Content-Disposition"] = f'attachment; filename="{filename}"'
         return response
@@ -288,7 +371,6 @@ def solicitud_baja(request):
             {"error": f"Error al generar la solicitud de baja: {str(e)}"},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
-
 
 
 def _formatear_fecha_ddmmaaaa(fecha: date) -> str:
@@ -316,27 +398,12 @@ def _set_merged_safe(ws, coord: str, value, alignment: Alignment | None = None):
     if alignment is not None:
         cell.alignment = alignment
 
-
 @api_view(["POST"])
 @login_required_api
 def solicitud_prestamo(request):
     """
     Genera el formato de préstamo en Excel y registra la trazabilidad.
-
-    Body esperado (acepta nombres alternos):
-    {
-        "fecha_devolucion": "2025-08-20",          # YYYY-MM-DD
-        "solicitante_nombre": "Juan Pérez",        # o "nombre_solicitante"
-        "unidad_entidad": "Facultad de Ingeniería",
-        "nombre_proyecto": "Proyecto X",
-        "justificacion_prestamo": "Uso temporal...",   # o "justificacion"
-        "items": [
-            { "inventario": "166718", "motivo": "Uso en capacitación" },
-            { "inventario": "164553", "motivo": "Préstamo para pruebas" }
-        ]
-    }
     """
-
     try:
         data = request.data
 
@@ -368,12 +435,7 @@ def solicitud_prestamo(request):
             ).date()
         except ValueError:
             return Response(
-                {
-                    "error": (
-                        "Formato de 'fecha_devolucion' inválido. "
-                        "Usa el formato YYYY-MM-DD, por ejemplo: 2025-08-20."
-                    )
-                },
+                {"error": "Formato de 'fecha_devolucion' inválido. Usa YYYY-MM-DD."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -382,30 +444,21 @@ def solicitud_prestamo(request):
                 {"error": "El campo 'solicitante_nombre' (o 'nombre_solicitante') es obligatorio."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
         if not unidad_entidad:
             return Response(
                 {"error": "El campo 'unidad_entidad' es obligatorio."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
         if not nombre_proyecto:
             return Response(
                 {"error": "El campo 'nombre_proyecto' es obligatorio."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
         if not justificacion_prestamo:
             return Response(
-                {
-                    "error": (
-                        "El campo 'justificacion_prestamo' "
-                        "(o 'justificacion') es obligatorio."
-                    )
-                },
+                {"error": "El campo 'justificacion_prestamo' (o 'justificacion') es obligatorio."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
         if not items or not isinstance(items, list):
             return Response(
                 {"error": "Debes enviar una lista 'items' con al menos un elemento."},
@@ -415,32 +468,26 @@ def solicitud_prestamo(request):
         # -------- 2. Validar items y preparar estructuras --------
         inventarios = []
         motivos_por_inv = {}
-
         for idx, it in enumerate(items):
             inv = (it.get("inventario") or "").strip()
             mot = (it.get("motivo") or "").strip()
             if not inv:
                 return Response(
-                    {
-                        "error": (
-                            "Cada item debe tener 'inventario'. "
-                            f"Error en posición {idx}."
-                        )
-                    },
+                    {"error": f"Cada item debe tener 'inventario'. Error en posición {idx}."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             inventarios.append(inv)
             motivos_por_inv[inv] = mot
 
-        inventarios_unicos = list(dict.fromkeys(inventarios))  # preserva orden
+        inventarios_unicos = list(dict.fromkeys(inventarios))
 
         # -------- 3. Consultar inventario_items + usuarios --------
         with connection.cursor() as cursor:
             cursor.execute(
                 """
                 SELECT 
-                    ii.id,             -- PK inventario_items
-                    ii.inventario,     -- No. inventario
+                    ii.id,
+                    ii.inventario,
                     ii.descripcion,
                     ii.marca,
                     ii.valor,
@@ -457,16 +504,11 @@ def solicitud_prestamo(request):
 
         if not rows:
             return Response(
-                {
-                    "error": (
-                        "No se encontró ningún elemento con esos números de inventario."
-                    )
-                },
+                {"error": "No se encontró ningún elemento con esos números de inventario."},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
         campos_por_inv = {}
-        responsables_ids = set()
         responsables_nombres = set()
 
         for (
@@ -489,14 +531,10 @@ def solicitud_prestamo(request):
                 "recibido_por_id": recibido_por_id,
                 "usuario_nombre": usuario_nombre or "",
             }
-            if recibido_por_id:
-                responsables_ids.add(recibido_por_id)
             if usuario_nombre:
                 responsables_nombres.add(usuario_nombre)
 
-        no_encontrados = [
-            inv for inv in inventarios_unicos if inv not in campos_por_inv
-        ]
+        no_encontrados = [inv for inv in inventarios_unicos if inv not in campos_por_inv]
         if no_encontrados:
             return Response(
                 {
@@ -530,7 +568,6 @@ def solicitud_prestamo(request):
             "plantillas",
             "formato-prestamo.xlsx",
         )
-
         if not os.path.exists(template_path):
             return Response(
                 {"error": f"No se encontró la plantilla en: {template_path}"},
@@ -543,9 +580,10 @@ def solicitud_prestamo(request):
         except KeyError:
             ws = wb.active
 
+        wrap_top = Alignment(wrap_text=True, vertical="top")
+
         # -------- 6. Cabecera --------
         hoy = date.today()
-
         _set_merged_safe(ws, "D6", _formatear_fecha_ddmmaaaa(hoy))
         _set_merged_safe(ws, "D7", _formatear_fecha_ddmmaaaa(fecha_devolucion))
 
@@ -554,18 +592,23 @@ def solicitud_prestamo(request):
 
         _set_merged_safe(ws, "D14", solicitante_nombre)
         _set_merged_safe(ws, "D15", unidad_entidad)
-        _set_merged_safe(ws, "D16", nombre_proyecto,
-                         Alignment(wrap_text=True, vertical="top"))
-        _set_merged_safe(ws, "D17", justificacion_prestamo,
-                         Alignment(wrap_text=True, vertical="top"))
+
+        _set_merged_safe(ws, "D16", nombre_proyecto, wrap_top)
+        _set_merged_safe(ws, "D17", justificacion_prestamo, wrap_top)
+
+        # ✅ Ajusta altura cabecera de forma “como BAJA” (sin multiplicar por altura del template)
+        autofit_row_height_fixed(ws, 16, cols=("D",), base_height=15, max_height=120)
+        autofit_row_height_fixed(ws, 17, cols=("D",), base_height=15, max_height=180)
 
         # -------- 7. Tabla elementos a prestar --------
-        # A: No. Inventario
-        # B–E: Descripción
-        # F–G: Marca
-        # H–I: Valor de compra
+        # En tu plantilla: filas 22–25 son las del detalle.
         fila_actual = 22
         fila_max = 25
+
+        # ✅ MUY IMPORTANTE:
+        # Row 22 en el template viene MUY alta (ej: 109.5). La reseteamos antes de calcular.
+        for r in range(fila_actual, fila_max + 1):
+            ws.row_dimensions[r].height = 15  # base fija y controlada
 
         for inv in inventarios_unicos:
             if fila_actual > fila_max:
@@ -579,29 +622,30 @@ def solicitud_prestamo(request):
             # No. Inventario
             ws[f"A{fila_actual}"] = inv
 
-            # Descripción (B–E)
-            _set_merged_safe(
-                ws,
-                f"B{fila_actual}",
-                desc,
-                Alignment(wrap_text=True, vertical="top")
-            )
+            # Descripción (B–E merged)
+            _set_merged_safe(ws, f"B{fila_actual}", desc, wrap_top)
 
-            # Marca (F–G)
-            _set_merged_safe(
-                ws,
-                f"F{fila_actual}",
-                marca,
-                Alignment(wrap_text=True, vertical="top")
-            )
+            # Marca (F–G merged)
+            _set_merged_safe(ws, f"F{fila_actual}", marca, wrap_top)
 
-            # Valor compra (H–I)
+            # Valor compra (H–I merged)
             _set_merged_safe(ws, f"H{fila_actual}", valor)
+
+            # ✅ Auto-altura realista por Descripción + Marca (no toca anchos)
+            # - base_height 15: evita la fila gigante
+            # - width_factor 0.90: evita subestimar líneas (caso “nombre largo no sube”)
+            autofit_row_height_fixed(
+                ws,
+                fila_actual,
+                cols=("B", "F"),
+                base_height=15,
+                width_factor=0.90,
+                max_height=140,
+            )
 
             fila_actual += 1
 
         # -------- 8. Firmas sección 5 --------
-        # Ajusta coordenadas si tu plantilla las tiene en otra fila/columna
         _set_merged_safe(ws, "D28", nombre_responsable)
         _set_merged_safe(ws, "F28", solicitante_nombre)
 
@@ -677,9 +721,7 @@ def solicitud_prestamo(request):
         # -------- 11. Respuesta --------
         response = HttpResponse(
             output.getvalue(),
-            content_type=(
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            ),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
         response["Content-Disposition"] = f'attachment; filename="{filename}"'
         return response
@@ -689,7 +731,6 @@ def solicitud_prestamo(request):
             {"error": f"Error al generar la solicitud de préstamo: {str(e)}"},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
-
 
 @api_view(["POST"])
 @login_required_api
@@ -706,7 +747,6 @@ def solicitud_traslado(request):
         ]
     }
     """
-
     try:
         data = request.data
 
@@ -764,15 +804,12 @@ def solicitud_traslado(request):
         with connection.cursor() as cursor:
             # Usuario actual (responsable / "De:")
             if user_id:
-                cursor.execute(
-                    "SELECT nombre FROM usuarios WHERE id = %s",
-                    [user_id],
-                )
+                cursor.execute("SELECT nombre FROM usuarios WHERE id = %s", [user_id])
                 row = cursor.fetchone()
                 if row:
                     nombre_usuario = row[0] or ""
 
-            # Destinatario
+            # Destinatario por nombre (igual que tú)
             cursor.execute(
                 """
                 SELECT id, nombre
@@ -783,18 +820,10 @@ def solicitud_traslado(request):
             )
             dest_rows = cursor.fetchall()
 
-        if not destinatario_nombre:
-            return Response(
-                {"error": "Debes indicar el nombre del destinatario."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
         if not dest_rows:
             return Response(
                 {
-                    "error": (
-                        "El destinatario indicado no existe en la tabla 'usuarios'."
-                    ),
+                    "error": "El destinatario indicado no existe en la tabla 'usuarios'.",
                     "destinatario": destinatario_nombre,
                 },
                 status=status.HTTP_400_BAD_REQUEST,
@@ -813,10 +842,8 @@ def solicitud_traslado(request):
             )
 
         destinatario_id, destinatario_nombre_db = dest_rows[0]
-        # Usamos el nombre tal como está en BD (puede tener mayúsculas, tildes, etc.)
         destinatario_nombre = destinatario_nombre_db
 
-        # Si el usuario actual no está en usuarios, usamos un fallback
         if not nombre_usuario:
             nombre_usuario = "USUARIO ACTUAL"
 
@@ -825,11 +852,10 @@ def solicitud_traslado(request):
             cursor.execute(
                 """
                 SELECT 
-                    ii.id,          -- PK
-                    ii.inventario,  -- número de inventario
+                    ii.id,
+                    ii.inventario,
                     ii.descripcion,
-                    ii.categoria_id,
-                    ii.serial
+                    ii.categoria_id
                 FROM inventario_items ii
                 WHERE ii.inventario = ANY(%s)
                 """,
@@ -839,33 +865,20 @@ def solicitud_traslado(request):
 
         if not rows:
             return Response(
-                {
-                    "error": (
-                        "No se encontró ningún elemento con esos números de inventario."
-                    )
-                },
+                {"error": "No se encontró ningún elemento con esos números de inventario."},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
         campos_por_inv = {}
-        for (
-            item_id,
-            inventario,
-            descripcion,
-            categoria_id,
-            serial,
-        ) in rows:
+        for (item_id, inventario, descripcion, categoria_id) in rows:
             campos_por_inv[str(inventario)] = {
                 "id": item_id,
                 "inventario": inventario,
                 "descripcion": descripcion or "",
                 "categoria_id": categoria_id,
-                "serial": serial or "",
             }
 
-        no_encontrados = [
-            inv for inv in inventarios_unicos if inv not in campos_por_inv
-        ]
+        no_encontrados = [inv for inv in inventarios_unicos if inv not in campos_por_inv]
         if no_encontrados:
             return Response(
                 {
@@ -897,29 +910,20 @@ def solicitud_traslado(request):
 
         hoy = date.today()
         fecha_str = hoy.strftime("%d/%m/%Y")
+        wrap_top = Alignment(wrap_text=True, vertical="top")
 
-        # U.A.A -> B5:C5 (combinada)
-        _set_merged_safe(ws, "B5", "Escuela de sistemas")
+        # -------- 6. Cabecera --------
+        _set_merged_safe(ws, "B5", "Escuela de sistemas")          # U.A.A (B5:C5)
+        ws["D5"] = f"Fecha: {fecha_str}"                          # Fecha
+        _set_merged_safe(ws, "B7", nombre_usuario)                 # De:
+        _set_merged_safe(ws, "B38", f"Nombre: {nombre_usuario}")   # Firma entrega
+        _set_merged_safe(ws, "C38", f"Nombre: {destinatario_nombre}")  # Firma recibe
 
-        # Fecha -> D5 (tiene texto 'Fecha: ...')
-        # Sobrescribimos con el formato requerido
-        ws["D5"] = f"Fecha: {fecha_str}"
-
-        # 'De:' -> B7:D7 (combinada, escribimos en B7)
-        _set_merged_safe(ws, "B7", nombre_usuario)
-
-        # Firma responsable (parte inferior) A38:B38  -> 'Nombre: nombre-usuario'
-        _set_merged_safe(ws, "B38", f"Nombre: {nombre_usuario}")
-
-        # Firma destinatario C38:D38 -> 'Nombre: nombre-destinatario'
-        _set_merged_safe(ws, "C38", f"Nombre: {destinatario_nombre}")
-
-        # -------- 6. Tablas según categoría --------
-        # Secciones (filas basadas en tu plantilla):
-        #  - Mayores:   encabezado en fila 9, datos 10–18
-        #  - Menores:   encabezado en fila 20, datos 21–26
-        #  - Intangibles: encabezado en fila 28, datos 29–32
-
+        # -------- 7. Tablas según categoría --------
+        # En tu plantilla (según imagen):
+        # - MAYORES:   encabezado fila 9, datos 10–18
+        # - MENORES:   encabezado fila 20, datos 21–26
+        # - INTANGIBLES: encabezado fila 28, datos 29–34 (en tu imagen se ve hasta 34)
         fila_mayores = 10
         fila_menores = 21
         fila_intang  = 29
@@ -928,79 +932,88 @@ def solicitud_traslado(request):
         consec_menores = 1
         consec_intang  = 1
 
+        # ✅ IMPORTANTÍSIMO: limpia cualquier cosa en E/F/G dentro del rango de tablas
+        # para que no vuelva a aparecer texto fuera de la tabla.
+        for r in range(10, 35):
+            for c in ("E", "F", "G", "H"):
+                ws[f"{c}{r}"].value = None
+
+        # ✅ También reseteamos alturas base de las filas de tablas a 15
+        for r in range(10, 35):
+            ws.row_dimensions[r].height = 15
+
         for inv in inventarios_unicos:
             data = campos_por_inv[inv]
             desc = data["descripcion"]
             categoria = data["categoria_id"]
-            serial = data["serial"]
             motivo = motivos_por_inv[inv]
 
-            # Texto para la columna ELEMENTO
             texto_elemento = f"{inv} - {desc}"
 
             if categoria == 2:  # MAYORES
                 if fila_mayores > 18:
-                    # No hay más filas libres en la tabla de mayores
                     continue
 
                 fila = fila_mayores
-                ws[f"A{fila}"] = consec_mayores
-                _set_merged_safe(
-                    ws,
-                    f"B{fila}",
-                    texto_elemento,
-                    Alignment(wrap_text=True, vertical="top"),
+                ws[f"A{fila}"] = inv
+                # ELEMENTO (B:C merged)
+                _set_merged_safe(ws, f"B{fila}", texto_elemento, wrap_top)
+
+                # ✅ MOTIVO DE TRASLADO (D) -> no E
+                ws[f"D{fila}"] = motivo
+                ws[f"D{fila}"].alignment = wrap_top
+
+                # ✅ Auto-altura por ELEMENTO + MOTIVO (como baja)
+                autofit_row_height_fixed(
+                    ws, fila, cols=("B", "D"),
+                    base_height=15, width_factor=0.90, max_height=140
                 )
-                ws[f"D{fila}"] = serial
-                ws[f"E{fila}"] = motivo
-                ws[f"F{fila}"] = destinatario_nombre
-                ws[f"G{fila}"] = "Escuela de sistemas"
 
                 fila_mayores += 1
-                consec_mayores += 1
-
             elif categoria == 1:  # MENORES
                 if fila_menores > 26:
                     continue
 
                 fila = fila_menores
                 ws[f"A{fila}"] = consec_menores
-                _set_merged_safe(
-                    ws,
-                    f"B{fila}",
-                    texto_elemento,
-                    Alignment(wrap_text=True, vertical="top"),
+
+                _set_merged_safe(ws, f"B{fila}", texto_elemento, wrap_top)
+
+                ws[f"D{fila}"] = motivo
+                ws[f"D{fila}"].alignment = wrap_top
+
+                autofit_row_height_fixed(
+                    ws, fila, cols=("B", "D"),
+                    base_height=15, width_factor=0.90, max_height=140
                 )
-                ws[f"D{fila}"] = serial
-                ws[f"E{fila}"] = motivo
-                ws[f"F{fila}"] = destinatario_nombre
-                ws[f"G{fila}"] = "Escuela de sistemas"
 
                 fila_menores += 1
                 consec_menores += 1
 
             elif categoria == 3:  # INTANGIBLES
-                if fila_intang > 32:
+                if fila_intang > 34:   # en tu imagen hay espacio hasta 34
                     continue
 
                 fila = fila_intang
                 ws[f"A{fila}"] = consec_intang
-                _set_merged_safe(
-                    ws,
-                    f"B{fila}",
-                    texto_elemento,
-                    Alignment(wrap_text=True, vertical="top"),
-                )
+
+                _set_merged_safe(ws, f"B{fila}", texto_elemento, wrap_top)
+
                 ws[f"D{fila}"] = motivo
+                ws[f"D{fila}"].alignment = wrap_top
+
+                autofit_row_height_fixed(
+                    ws, fila, cols=("B", "D"),
+                    base_height=15, width_factor=0.90, max_height=140
+                )
 
                 fila_intang += 1
                 consec_intang += 1
 
             else:
-                # Categoría desconocida -> por ahora la ignoramos
                 continue
 
-        # -------- 7. Guardar Excel en memoria y en servidor --------
+        # -------- 8. Guardar Excel en memoria y en servidor --------
         output = io.BytesIO()
         wb.save(output)
         output.seek(0)
@@ -1016,7 +1029,7 @@ def solicitud_traslado(request):
             with open(saved_path, "wb") as f:
                 f.write(output.getvalue())
 
-        # -------- 8. Registrar trazabilidad --------
+        # -------- 9. Registrar trazabilidad --------
         ahora = timezone.now()
         trazas = []
 
@@ -1065,12 +1078,10 @@ def solicitud_traslado(request):
                     trazas,
                 )
 
-        # -------- 9. Responder con el archivo --------
+        # -------- 10. Responder con el archivo --------
         response = HttpResponse(
             output.getvalue(),
-            content_type=(
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            ),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
         response["Content-Disposition"] = f'attachment; filename="{filename}"'
         return response
@@ -1080,13 +1091,6 @@ def solicitud_traslado(request):
             {"error": f"Error al generar la solicitud de traslado: {str(e)}"},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
-
-# Mapa para traducir el query param "tipo" a valores de la columna accion
-TIPO_ACCION_MAP = {
-    "baja": ["BAJA_SOLICITADA"],
-    "traslado": ["TRASLADO_SOLICITADO"],
-}
-
 
 @api_view(["GET"])
 @login_required_api

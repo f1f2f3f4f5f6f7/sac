@@ -13,5 +13,5 @@ urlpatterns = [
     path("solicitud_baja/", solicitud_baja, name="solicitud_baja"),
     path("solicitud_traslado/", solicitud_traslado, name="solicitud_traslado"),
     path("consultar_trazabilidad/", historial_trazabilidad, name="consultar_trazabilidad"),
-     path("consultar_trazabilidad_usuario/", consultar_trazabilidad_usuario, name="consultar_trazabilidad_usuario",),
+    path("consultar_trazabilidad_usuario/", consultar_trazabilidad_usuario, name="consultar_trazabilidad_usuario",),
 ]
