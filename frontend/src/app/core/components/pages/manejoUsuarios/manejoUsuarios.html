@@ -6,8 +6,8 @@
   <div class="header">
     <h2>Gestión de Usuarios</h2>
 
-    <div class="flex flex-row md:flex-row justify-between items-center gap-3">
-      <p-iconfield class="w-full">
+    <div class="flex flex-row md:flex-row justify-between items-center gap-5">
+      <p-iconfield class="flex-1">
         <p-inputicon class="pi pi-search" />
         <input
           class="w-full"
@@ -23,7 +23,8 @@
               icon="pi pi-user-plus" 
               label="Nuevo"
               class="p-button-rounded"
-              [style]="{'background-color': '#1e3a8a', 'border-color': '#1e3a8a'}"
+              style="min-width: 150px; padding-left: 1.5rem; padding-right: 1.5rem;"
+              [style]="{'background-color': '#1e3a8a', 'border-color': '#1e3a8a', 'min-width': '100px', 'padding-left': '1.5rem', 'padding-right': '1.5rem'}"
               (click)="openNew()">
       </button>
     </div>

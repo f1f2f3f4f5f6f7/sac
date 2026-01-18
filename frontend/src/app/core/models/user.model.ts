@@ -1,4 +1,4 @@
-import { Role } from "./role.enum"
+import {RoleType } from "./role.enum"
 
 export interface User {
     id: number,
@@ -6,7 +6,7 @@ export interface User {
     nombre: string,
     email: string,
     password: string,
-    rol: Role,
+    rol: RoleType,
     escuela: number,
     activo: boolean,
 }

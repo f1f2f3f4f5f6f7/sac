@@ -178,7 +178,7 @@ def profile_view(request):
 @login_required_api
 @require_http_methods(["GET"])
 def users_list_view(request):
-    """Listar todos los usuarios del sistema"""
+    """Listar todos los usuarios del sistema excepto el usuario actual"""
     try:
         with connection.cursor() as cursor:
             cursor.execute("""
@@ -186,8 +186,9 @@ def users_list_view(request):
                        e.nombre, e.id
                 FROM usuarios u
                 LEFT JOIN escuelas e ON u.escuela_id = e.id
+                WHERE u.id != %s
                 ORDER BY u.nombre ASC
-            """)
+            """, (request.user_id,))
             users = cursor.fetchall()
 
         users_list = []
@@ -213,6 +214,7 @@ def users_list_view(request):
 
     except Exception as e:
         return JsonResponse({'error': 'Error interno', 'message': str(e)}, status=500)
+
 
 
 
@@ -290,3 +292,33 @@ def register_view(request):
         return JsonResponse({'error': 'JSON inválido'}, status=400)
     except Exception as e:
         return JsonResponse({'error': 'Error interno', 'message': str(e)}, status=500)
+
+
+
+
+
+@login_required_api
+@require_http_methods(["POST"])
+def delete_user_view(request):
+    """Eliminar usuario"""
+    try:
+        data = json.loads(request.body)
+        codigo = data.get('codigo', '').strip().upper()
+        if not codigo:
+            return JsonResponse({'error': 'Código de usuario requerido'}, status=400)
+        if not re.match(r'^[A-Z0-9]+$', codigo):
+            return JsonResponse({'error': 'Código inválido'}, status=400)
+        with connection.cursor() as cursor:
+            cursor.execute("DELETE FROM usuarios WHERE codigo = %s", (codigo,))
+            if cursor.rowcount == 0:
+                return JsonResponse({'error': 'Usuario no encontrado'}, status=404)
+        return JsonResponse({'success': True, 'message': 'Usuario eliminado correctamente'})
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'JSON inválido'}, status=400)
+    except Exception as e:
+        return JsonResponse({'error': 'Error interno', 'message': str(e)}, status=500)
+
+
+
+
+
