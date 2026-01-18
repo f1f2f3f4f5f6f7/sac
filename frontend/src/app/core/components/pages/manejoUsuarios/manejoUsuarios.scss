@@ -1,0 +1,25 @@
+.users-container {
+    padding: 2rem;
+  }
+  
+  .header {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    margin-bottom: 1rem;
+  }
+  
+  .header h2 {
+    flex: 1;
+  }
+  
+  .search {
+    width: 250px;
+  }
+  
+  .field {
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 1rem;
+  }
+  
