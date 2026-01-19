@@ -1,0 +1,161 @@
+.configuracion-container {
+    padding: 2rem;
+    max-width: 900px;
+    margin: 0 auto;
+    min-height: 100vh;
+  
+       // Navigation Bar
+       .navigation-bar {
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
+        padding: 0.5rem;
+        margin: 0 auto 2rem auto; // Centrar horizontalmente
+        max-width: 200px; // Limitar ancho máximo
+        border-radius: 2rem;
+        background: var(--surface-card);
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  
+        .nav-item {
+          flex: 0 0 auto; // No expandir
+          display: flex;
+          height: 2.5rem;
+          padding: 0 2rem; // Padding para que tenga un tamaño adecuado
+          align-items: center;
+          justify-content: center;
+          border-radius: 1.5rem;
+          text-decoration: none;
+          transition: all 0.3s ease;
+          color: var(--text-color-secondary);
+          background: transparent;
+  
+          &.active {
+            background: var(--primary-color);
+            color: white;
+          }
+  
+          span {
+            font-weight: 500;
+          }
+        }
+      }
+  
+    // Content Card
+    .content-card {
+      padding: 2rem 3rem;
+      border-radius: 1.5rem;
+      background: var(--surface-card);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  
+      // Section
+      .section {
+        padding: 2.5rem 0;
+        border-bottom: 1px solid var(--surface-border);
+  
+        &:last-of-type {
+          border-bottom: none;
+        }
+  
+        .field-row {
+          display: flex;
+          flex-direction: column;
+          gap: 0.5rem;
+          margin-bottom: 2.5rem;
+  
+          &:last-child {
+            margin-bottom: 0;
+          }
+  
+          @media (min-width: 640px) {
+            flex-direction: row;
+            align-items: flex-start;
+          }
+  
+          .field-label {
+            flex: 0 0 45%;
+            font-size: 1.125rem;
+            font-weight: 500;
+            color: var(--text-color);
+            padding-top: 0.5rem;
+  
+            @media (max-width: 640px) {
+              flex: none;
+              padding-top: 0;
+            }
+          }
+  
+          .field-input {
+            flex: 0 0 55%;
+            width: 100%;
+  
+            @media (max-width: 640px) {
+              flex: none;
+              width: 100%;
+            }
+  
+            .custom-input {
+              width: 100%;
+              padding: 0.75rem 1.25rem;
+              border-radius: 2rem;
+              background: var(--surface-ground);
+              border: 1px solid var(--surface-border);
+              color: var(--text-color);
+              font-size: 1rem;
+              transition: all 0.3s ease;
+  
+              &:focus {
+                outline: none;
+                border-color: var(--primary-color);
+                box-shadow: 0 0 0 0.2rem var(--primary-color-alpha);
+              }
+  
+              &::placeholder {
+                color: var(--text-color-secondary);
+                opacity: 0.6;
+              }
+            }
+          }
+        }
+      }
+  
+      // Actions
+      .actions {
+        padding-top: 2.5rem;
+        display: flex;
+        justify-content: flex-end;
+  
+        .save-button {
+          min-width: 10rem;
+          padding: 0.75rem 1.5rem;
+          background: var(--primary-color);
+          color: white;
+          border: none;
+          border-radius: 0.5rem;
+          font-weight: 500;
+          transition: all 0.3s ease;
+  
+          &:hover:not(:disabled) {
+            opacity: 0.9;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+          }
+  
+          &:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+          }
+        }
+      }
+    }
+  
+    // Responsive
+    @media (max-width: 768px) {
+      padding: 1rem;
+  
+      .content-card {
+        padding: 1.5rem;
+      }
+    }
+  }

@@ -67,4 +67,17 @@ export class AuthService {
       )
       .subscribe();
   }
+
+  logout(): Observable<any> {
+    return this._httpClient.post<any>(`${url}/logout/`, {}).pipe(
+      tap(() => {
+        // Limpiar token del localStorage
+        localStorage.removeItem(USER_LOCAL_STORAGE_KEY);
+        // Limpiar usuario del estado
+        this.userLogged(null);
+        // Redirigir al login
+        this.router.navigateByUrl('/login');
+      })
+    );
+  }
 }

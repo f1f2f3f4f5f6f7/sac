@@ -1,122 +1,101 @@
-<p-toast></p-toast>
-<p-confirmDialog></p-confirmDialog>
+// ... existing imports ...
 
-<div class="users-container">
+@Component({
+  selector: 'app-topbar',
+  standalone: true,
+  imports: [
+    RouterModule, 
+    CommonModule, 
+    StyleClassModule, 
+    AppConfigurator,
+    Drawer,
+    ButtonModule
+    // Quita los demás imports que ya no necesitas si el drawer está vacío
+  ],
+  template: ` 
+    <div class="layout-topbar">
+      <!-- ... existing topbar code ... -->
+      
+      <div class="layout-topbar-actions">
+        <div class="layout-config-menu">
+          <button type="button" class="layout-topbar-action" (click)="toggleDarkMode()">
+            <i
+              [ngClass]="{
+                'pi ': true,
+                'pi-moon': layoutService.isDarkTheme(),
+                'pi-sun': !layoutService.isDarkTheme()
+              }"
+            ></i>
+          </button>
+          <app-configurator />
+        </div>
 
-  <div class="header">
-    <h2>Gestión de Usuarios</h2>
+        <button
+          class="layout-topbar-menu-button layout-topbar-action"
+          pStyleClass="@next"
+          enterFromClass="hidden"
+          enterActiveClass="animate-scalein"
+          leaveToClass="hidden"
+          leaveActiveClass="animate-fadeout"
+          [hideOnOutsideClick]="true"
+        >
+          <i class="pi pi-ellipsis-v"></i>
+        </button>
 
-    <div class="flex flex-row md:flex-row justify-between items-center gap-3">
-      <p-iconfield class="w-full">
-        <p-inputicon class="pi pi-search" />
-        <input
-          class="w-full"
-          pInputText
-          type="text"
-          [(ngModel)]="globalQuery"
-          (input)="dt.filterGlobal($event.target.value, 'contains')"
-          placeholder="Buscar usuario..."
-        />
-      </p-iconfield>
-
-      <button pButton 
-              icon="pi pi-user-plus" 
-              label="Nuevo"
-              class="p-button-rounded"
-              [style]="{'background-color': '#1e3a8a', 'border-color': '#1e3a8a'}"
-              (click)="openNew()">
-      </button>
-    </div>
-  </div>
-
-  <p-card>
-    <p-table #dt 
-             [value]="users" 
-             responsiveLayout="scroll" 
-             [loading]="loading"
-             [globalFilterFields]="['name', 'codigo', 'email', 'escuela.nombre']">
-
-      <ng-template pTemplate="header">
-        <tr>
-          <th style="width:60px">#</th>
-          <th>Nombre</th>
-          <th>Código</th>
-          <th>Email</th>
-          <th>Escuela</th>
-          <th style="width:120px">Acciones</th>
-        </tr>
-      </ng-template>
-
-      <ng-template pTemplate="body" let-user let-index="rowIndex">
-        <tr>
-          <td>{{ index + 1 }}</td>
-          <td>{{ user.name }}</td>
-          <td>{{ user.codigo }}</td>
-          <td>{{ user.email }}</td>
-          <td>{{ user.escuela?.nombre || 'Sin escuela' }}</td>
-          <td>
-            <button pButton 
-                    icon="pi pi-trash"
-                    class="p-button-rounded p-button-danger p-button-text"
-                    (click)="deleteUser(user)">
+        <div class="layout-topbar-menu hidden lg:block">
+          <div class="layout-topbar-menu-content">
+            <button type="button" class="layout-topbar-action" (click)="openProfileDrawer()">
+              <i class="pi pi-user"></i>
+              <span>Perfil</span>
             </button>
-          </td>
-        </tr>
-      </ng-template>
-
-      <ng-template pTemplate="emptymessage">
-        <tr>
-          <td colspan="6" class="text-center">
-            <p *ngIf="!loading">No hay usuarios registrados</p>
-          </td>
-        </tr>
-      </ng-template>
-
-    </p-table>
-  </p-card>
-
-</div>
-<!-- MODAL -->
-<p-dialog header="Nuevo Usuario"
-          [(visible)]="userDialog"
-          [modal]="true"
-          [style]="{width:'420px'}">
-
-  <div class="form">
-
-    <div class="field">
-      <label>Código</label>
-      <input pInputText [(ngModel)]="newUser.codigo" placeholder="Ej: 555555" />
+          </div>
+        </div>
+      </div>
     </div>
 
-    <div class="field">
-      <label>Nombre</label>
-      <input pInputText [(ngModel)]="newUser.nombre" placeholder="Nombre completo" />
-    </div>
+    <!-- DRAWER VACÍO -->
+    <p-drawer 
+      [(visible)]="profileDrawerVisible" 
+      position="right" 
+      [modal]="true"
+      [style]="{ width: '20rem' }"
+      styleClass="w-20rem">
+    </p-drawer>
+  `,
+  providers: [MessageService]
+})
+export class AppTopbar implements OnInit, OnDestroy {
+  items!: MenuItem[];
+  profileDrawerVisible = false;
+  
+  // Puedes eliminar todas las propiedades relacionadas con profile, password, preferences, etc.
+  // si ya no las necesitas
 
-    <div class="field">
-      <label>Email</label>
-      <input pInputText type="email" [(ngModel)]="newUser.email" placeholder="email@ejemplo.com" />
-    </div>
+  private destroy$ = new Subject<void>();
 
-    <div class="field">
-      <label>Contraseña</label>
-      <p-password [(ngModel)]="newUser.password" [feedback]="false" placeholder="Mínimo 6 caracteres" styleClass="w-full"></p-password>
-    </div>
+  constructor(
+    public layoutService: LayoutService,
+    private router: Router,
+    private authService: AuthService
+    // Puedes quitar UsersService y MessageService si ya no los usas
+  ) {}
 
-  </div>
+  ngOnInit() {
+    // Puedes eliminar loadUserProfile() y loadPreferences() si ya no los necesitas
+  }
 
-  <ng-template pTemplate="footer">
-    <button pButton label="Cancelar" 
-            class="p-button-text" 
-            [disabled]="saving"
-            (click)="userDialog=false"></button>
+  ngOnDestroy() {
+    this.destroy$.next();
+    this.destroy$.complete();
+  }
 
-    <button pButton label="Guardar" 
-            class="p-button-success" 
-            [disabled]="saving"
-            [loading]="saving"
-            (click)="saveUser()"></button>
-  </ng-template>
+  toggleDarkMode() {
+    this.layoutService.layoutConfig.update((state) => ({ ...state, darkTheme: !state.darkTheme }));
+  }
 
-</p-dialog>
+  openProfileDrawer() {
+    this.profileDrawerVisible = true;
+  }
+
+  // Puedes eliminar saveProfile() y updatePassword() si ya no los necesitas
+}

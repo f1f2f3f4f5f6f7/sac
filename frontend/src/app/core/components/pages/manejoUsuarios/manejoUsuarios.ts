@@ -18,6 +18,7 @@ import { UsersService, UserFromBackend } from '../../../services/users/users.ser
 import { Subject, takeUntil } from 'rxjs';
 import { PasswordModule } from 'primeng/password';
 import { Table } from 'primeng/table';
+import { TooltipModule } from 'primeng/tooltip';
 
 
 
@@ -34,6 +35,13 @@ interface User {
   }
 
   interface NewUserForm {
+    codigo: string;
+    nombre: string;
+    email: string;
+    password: string;
+  }
+
+  interface UpdateUserForm {
     codigo: string;
     nombre: string;
     email: string;
@@ -59,7 +67,8 @@ interface User {
     CardModule,
     IconFieldModule,
     InputIconModule,
-    ProgressSpinnerModule
+    ProgressSpinnerModule,
+    TooltipModule
   ],
   templateUrl: './manejoUsuarios.html',
   styleUrls: ['./manejoUsuarios.scss'],
@@ -68,13 +77,16 @@ interface User {
 export class ManejoUsuariosComponent implements OnInit, OnDestroy {
   @ViewChild('dv') dv!: Table;
   userDialog = false;
+  editDialog = false;
   users: User[] = [];
   loading = false;
   saving = false;
+  updating = false;
   globalQuery: string = '';
   private destroy$ = new Subject<void>();
 
   newUser: NewUserForm = { codigo: '', nombre: '', email: '', password: '' };
+  editUser: UpdateUserForm = { codigo: '', nombre: '', email: '', password: '' };
 
   constructor(
     private confirmService: ConfirmationService,
@@ -125,6 +137,89 @@ export class ManejoUsuariosComponent implements OnInit, OnDestroy {
   openNew() {
     this.newUser = { codigo: '', nombre: '', email: '', password: '' };
     this.userDialog = true;
+  }
+
+  openEdit(user: User) {
+    this.editUser = {
+      codigo: user.codigo,
+      nombre: user.name,
+      email: user.email,
+      password: ''
+    };
+    this.editDialog = true;
+  }
+
+  updateUser() {
+    // Validar que al menos un campo esté presente
+    if (!this.editUser.email && !this.editUser.password) {
+      this.messageService.add({
+        severity: 'warn',
+        summary: 'Campos incompletos',
+        detail: 'Debe proporcionar al menos un campo para actualizar (email o contraseña)'
+      });
+      return;
+    }
+
+    // Validar email si se proporciona
+    if (this.editUser.email && !this.editUser.email.includes('@')) {
+      this.messageService.add({
+        severity: 'warn',
+        summary: 'Email inválido',
+        detail: 'Por favor ingrese un email válido'
+      });
+      return;
+    }
+
+    // Validar longitud de contraseña si se proporciona
+    if (this.editUser.password && this.editUser.password.length < 6) {
+      this.messageService.add({
+        severity: 'warn',
+        summary: 'Contraseña inválida',
+        detail: 'La contraseña debe tener al menos 6 caracteres'
+      });
+      return;
+    }
+
+    this.updating = true;
+
+    const updateData: any = {
+      codigo: this.editUser.codigo
+    };
+
+    if (this.editUser.email) {
+      updateData.email = this.editUser.email.toLowerCase();
+    }
+
+    if (this.editUser.password) {
+      updateData.password = this.editUser.password;
+    }
+
+    this.usersService.updateUser(updateData)
+      .pipe(takeUntil(this.destroy$))
+      .subscribe({
+        next: (response) => {
+          if (response.success) {
+            this.messageService.add({
+              severity: 'success',
+              summary: 'Actualizado',
+              detail: response.message || 'Usuario actualizado correctamente'
+            });
+            this.editDialog = false;
+            this.loadUsers(); // Recargar la lista de usuarios
+          }
+          this.updating = false;
+        },
+        error: (error) => {
+          console.error('Error al actualizar usuario:', error);
+          const errorMessage = error?.error?.error || 'Error al actualizar el usuario';
+          this.messageService.add({
+            severity: 'error',
+            summary: 'Error',
+            detail: errorMessage
+          });
+          this.updating = false;
+        }
+      });
   }
 
   saveUser() {

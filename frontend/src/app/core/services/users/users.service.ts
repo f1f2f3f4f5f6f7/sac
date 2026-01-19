@@ -53,6 +53,25 @@ export interface RegisterUserRequest {
   }
 
 
+  export interface UpdateUserRequest {
+    codigo: string;
+    email?: string;
+    password?: string;
+  }
+  
+  export interface UpdateUserResponse {
+    success: boolean;
+    message: string;
+    user: {
+      id: number;
+      codigo: string;
+      nombre: string;
+      email: string;
+      rol: string;
+    };
+  }
+
+
 @Injectable({
   providedIn: 'root',
 })
@@ -93,6 +112,14 @@ export class UsersService {
 
   deleteUser(codigo: string): Observable<DeleteUserResponse> {
     return this._httpClient.post<DeleteUserResponse>(`${url}/delete/`, { codigo }).pipe(
+      catchError((error: any) => {
+        return throwError(() => error);
+      })
+    );
+  }
+
+  updateUser(userData: UpdateUserRequest): Observable<UpdateUserResponse> {
+    return this._httpClient.post<UpdateUserResponse>(`${url}/update/`, userData).pipe(
       catchError((error: any) => {
         return throwError(() => error);
       })

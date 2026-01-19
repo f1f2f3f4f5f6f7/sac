@@ -127,15 +127,16 @@ def login_view(request):
     except Exception as e:
         return JsonResponse({'error': 'Error interno', 'message': str(e)}, status=500)
 
-
-@csrf_exempt
+@login_required_api
 @require_http_methods(["POST"])
 def logout_view(request):
-    """Vista de logout - con JWT no necesitamos hacer nada en el servidor"""
-    return JsonResponse({
-        'success': True,
-        'message': 'Logout exitoso. El token debe ser eliminado del cliente.'
-    })
+    """Cerrar sesión"""
+    try:
+        return JsonResponse({'success': True, 'message': 'Sesión cerrada correctamente'})
+    except Exception as e:
+        return JsonResponse({'error': 'Error interno', 'message': str(e)}, status=500)
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'JSON inválido'}, status=400)
 
 
 @login_required_api
@@ -321,4 +322,110 @@ def delete_user_view(request):
 
 
 
-
+@login_required_api
+@require_http_methods(["POST"])
+def update_user_view(request):
+    """Actualizar usuario - permite actualizar email y/o password"""
+    try:
+        data = json.loads(request.body)
+        codigo = data.get('codigo', '').strip().upper()
+        email = data.get('email', '').strip().lower() if data.get('email') else None
+        password = data.get('password', '') if data.get('password') else None
+        current_password = data.get('current_password', '') if data.get('current_password') else None
+        
+        # Validar código
+        if not codigo:
+            return JsonResponse({'error': 'Código de usuario requerido'}, status=400)
+        if not re.match(r'^[A-Z0-9]+$', codigo):
+            return JsonResponse({'error': 'Código inválido'}, status=400)
+        
+        # Validar que al menos un campo para actualizar esté presente
+        if not email and not password:
+            return JsonResponse({'error': 'Debe proporcionar al menos un campo para actualizar (email o password)'}, status=400)
+        
+        # Validar email si se proporciona
+        if email and not validate_email(email):
+            return JsonResponse({'error': 'Email inválido'}, status=400)
+        
+        # Verificar si el usuario está actualizando su propio perfil
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT codigo FROM usuarios WHERE id = %s", (request.user_id,))
+            current_user = cursor.fetchone()
+            is_own_profile = current_user and current_user[0] == codigo
+        
+        # Si se está cambiando la contraseña Y es el propio perfil, validar la contraseña actual
+        if password and is_own_profile:
+            if not current_password:
+                return JsonResponse({'error': 'Debe proporcionar la contraseña actual para cambiar su contraseña'}, status=400)
+            
+            if len(password) < 6:
+                return JsonResponse({'error': 'Contraseña muy corta (mínimo 6 caracteres)'}, status=400)
+            
+            # Validar que la contraseña actual sea correcta
+            hashed_current_password = hash_password(current_password)
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT password_hash FROM usuarios WHERE codigo = %s", (codigo,))
+                user_data = cursor.fetchone()
+                if not user_data:
+                    return JsonResponse({'error': 'Usuario no encontrado'}, status=404)
+                
+                if user_data[0] != hashed_current_password:
+                    return JsonResponse({'error': 'La contraseña actual es incorrecta'}, status=400)
+        elif password and not is_own_profile:
+            # Si es un administrador actualizando otro usuario, solo validar longitud
+            if len(password) < 6:
+                return JsonResponse({'error': 'Contraseña muy corta (mínimo 6 caracteres)'}, status=400)
+        
+        with connection.cursor() as cursor:
+            # Verificar que el usuario existe
+            cursor.execute("SELECT id FROM usuarios WHERE codigo = %s", (codigo,))
+            user = cursor.fetchone()
+            if not user:
+                return JsonResponse({'error': 'Usuario no encontrado'}, status=404)
+            
+            # Verificar que el email no esté en uso por otro usuario (si se está actualizando)
+            if email:
+                cursor.execute("SELECT id FROM usuarios WHERE email = %s AND codigo != %s", (email, codigo))
+                if cursor.fetchone():
+                    return JsonResponse({'error': 'Email ya está en uso por otro usuario'}, status=400)
+            
+            # Construir la consulta UPDATE dinámicamente
+            update_fields = []
+            update_values = []
+            
+            if email:
+                update_fields.append("email = %s")
+                update_values.append(email)
+            
+            if password:
+                hashed_password = hash_password(password)
+                update_fields.append("password_hash = %s")
+                update_values.append(hashed_password)
+            
+            # Agregar el código al final para el WHERE
+            update_values.append(codigo)
+            
+            # Ejecutar el UPDATE
+            update_query = f"UPDATE usuarios SET {', '.join(update_fields)} WHERE codigo = %s RETURNING id, codigo, nombre, email, rol"
+            cursor.execute(update_query, update_values)
+            updated_user = cursor.fetchone()
+            
+            if not updated_user:
+                return JsonResponse({'error': 'Error al actualizar el usuario'}, status=500)
+        
+        return JsonResponse({
+            'success': True,
+            'message': 'Usuario actualizado correctamente',
+            'user': {
+                'id': updated_user[0],
+                'codigo': updated_user[1],
+                'nombre': updated_user[2],
+                'email': updated_user[3],
+                'rol': updated_user[4]
+            }
+        })
+    
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'JSON inválido'}, status=400)
+    except Exception as e:
+        return JsonResponse({'error': 'Error interno', 'message': str(e)}, status=500)

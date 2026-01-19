@@ -1,0 +1,78 @@
+<p-toast></p-toast>
+
+<div class="configuracion-container">
+  <!-- Navigation -->
+  <div class="navigation-bar">
+    <a class="nav-item active">
+      <span class="font-medium">Account</span>
+    </a>
+  </div>
+
+  <!-- Content Card -->
+  <div class="content-card">
+    
+    <!-- Email Section -->
+    <div class="section">
+      <div class="field-row">
+        <div class="field-label">Email</div>
+        <div class="field-input">
+          <input 
+            pInputText 
+            type="email"
+            [(ngModel)]="email" 
+            placeholder="email@ejemplo.com" 
+            class="custom-input">
+        </div>
+      </div>
+    </div>
+
+    <!-- Password Section -->
+    <div class="section">
+      <div class="field-row">
+        <div class="field-label">Ingresa tu actual contraseña</div>
+        <div class="field-input">
+          <input 
+            pInputText 
+            type="password"
+            [(ngModel)]="password.current" 
+            placeholder="*******" 
+            class="custom-input">
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field-label">Nueva contraseña</div>
+        <div class="field-input">
+          <input 
+            pInputText 
+            type="password"
+            [(ngModel)]="password.new" 
+            placeholder="*******" 
+            class="custom-input">
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field-label">Repetir nueva contraseña</div>
+        <div class="field-input">
+          <input 
+            pInputText 
+            type="password"
+            [(ngModel)]="password.confirm" 
+            placeholder="*******" 
+            class="custom-input">
+        </div>
+      </div>
+    </div>
+
+    <!-- Save Button -->
+    <div class="actions">
+      <button 
+        pButton 
+        class="save-button"
+        [disabled]="saving"
+        [loading]="saving"
+        (click)="save()">
+        Save
+      </button>
+    </div>
+  </div>
+</div>
