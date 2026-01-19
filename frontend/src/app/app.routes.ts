@@ -17,6 +17,11 @@ export const routes: Routes = [
         loadComponent: () =>
           import('./core/components/pages/manejoUsuarios/manejoUsuarios').then((m) => m.ManejoUsuariosComponent),
       },
+      {
+        path: 'configuracion',
+        loadComponent: () =>
+          import('./core/components/pages/configuracionUsuario/configuracionUsuario').then((m) => m.ConfiguracionUsuarioComponent),
+      },
     ],
   },
   {
@@ -40,6 +45,11 @@ export const routes: Routes = [
         canActivate: [authGuard],
         loadComponent: () =>
           import('./core/components/pages/busqueda/busqueda').then((m) => m.Busqueda),
+      },
+      {
+        path: 'configuracion',
+        loadComponent: () =>
+          import('./core/components/pages/configuracionUsuario/configuracionUsuario').then((m) => m.ConfiguracionUsuarioComponent),
       },
     ],
   },

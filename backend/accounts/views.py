@@ -127,15 +127,16 @@ def login_view(request):
     except Exception as e:
         return JsonResponse({'error': 'Error interno', 'message': str(e)}, status=500)
 
-
-@csrf_exempt
+@login_required_api
 @require_http_methods(["POST"])
 def logout_view(request):
-    """Vista de logout - con JWT no necesitamos hacer nada en el servidor"""
-    return JsonResponse({
-        'success': True,
-        'message': 'Logout exitoso. El token debe ser eliminado del cliente.'
-    })
+    """Cerrar sesión"""
+    try:
+        return JsonResponse({'success': True, 'message': 'Sesión cerrada correctamente'})
+    except Exception as e:
+        return JsonResponse({'error': 'Error interno', 'message': str(e)}, status=500)
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'JSON inválido'}, status=400)
 
 
 @login_required_api
@@ -321,7 +322,6 @@ def delete_user_view(request):
 
 
 
-
 @login_required_api
 @require_http_methods(["POST"])
 def update_user_view(request):
@@ -331,6 +331,7 @@ def update_user_view(request):
         codigo = data.get('codigo', '').strip().upper()
         email = data.get('email', '').strip().lower() if data.get('email') else None
         password = data.get('password', '') if data.get('password') else None
+        current_password = data.get('current_password', '') if data.get('current_password') else None
         
         # Validar código
         if not codigo:
@@ -346,9 +347,34 @@ def update_user_view(request):
         if email and not validate_email(email):
             return JsonResponse({'error': 'Email inválido'}, status=400)
         
-        # Validar password si se proporciona
-        if password and len(password) < 6:
-            return JsonResponse({'error': 'Contraseña muy corta (mínimo 6 caracteres)'}, status=400)
+        # Verificar si el usuario está actualizando su propio perfil
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT codigo FROM usuarios WHERE id = %s", (request.user_id,))
+            current_user = cursor.fetchone()
+            is_own_profile = current_user and current_user[0] == codigo
+        
+        # Si se está cambiando la contraseña Y es el propio perfil, validar la contraseña actual
+        if password and is_own_profile:
+            if not current_password:
+                return JsonResponse({'error': 'Debe proporcionar la contraseña actual para cambiar su contraseña'}, status=400)
+            
+            if len(password) < 6:
+                return JsonResponse({'error': 'Contraseña muy corta (mínimo 6 caracteres)'}, status=400)
+            
+            # Validar que la contraseña actual sea correcta
+            hashed_current_password = hash_password(current_password)
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT password_hash FROM usuarios WHERE codigo = %s", (codigo,))
+                user_data = cursor.fetchone()
+                if not user_data:
+                    return JsonResponse({'error': 'Usuario no encontrado'}, status=404)
+                
+                if user_data[0] != hashed_current_password:
+                    return JsonResponse({'error': 'La contraseña actual es incorrecta'}, status=400)
+        elif password and not is_own_profile:
+            # Si es un administrador actualizando otro usuario, solo validar longitud
+            if len(password) < 6:
+                return JsonResponse({'error': 'Contraseña muy corta (mínimo 6 caracteres)'}, status=400)
         
         with connection.cursor() as cursor:
             # Verificar que el usuario existe

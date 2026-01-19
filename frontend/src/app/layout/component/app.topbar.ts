@@ -5,11 +5,17 @@ import { CommonModule } from '@angular/common';
 import { StyleClassModule } from 'primeng/styleclass';
 import { LayoutService } from '../service/layout.service';
 import { AppConfigurator } from "./app.configurator";
+import { DrawerModule } from 'primeng/drawer';
+import { AuthService } from '../../core/auth/auth.service';
+import { Router } from '@angular/router';
+import { take } from 'rxjs/operators';
+
 
 @Component({
   selector: 'app-topbar',
   standalone: true,
-  imports: [RouterModule, CommonModule, StyleClassModule, AppConfigurator],
+  imports: [RouterModule, CommonModule, StyleClassModule, 
+    AppConfigurator, DrawerModule],
   template: ` <div class="layout-topbar">
     <div class="layout-topbar-logo-container">
       <button
@@ -82,21 +88,77 @@ import { AppConfigurator } from "./app.configurator";
 
       <div class="layout-topbar-menu hidden lg:block">
         <div class="layout-topbar-menu-content">
-          <button type="button" class="layout-topbar-action">
+          <button type="button" class="layout-topbar-action" (click)="openProfileDrawer()">
             <i class="pi pi-user"></i>
             <span>Perfil</span>
           </button>
         </div>
       </div>
     </div>
+
+    <!-- DRAWER CON CONTENIDO -->
+    <p-drawer 
+      [(visible)]="profileDrawerVisible" 
+      position="right" 
+      [modal]="true"
+      [style]="{ width: '20rem' }"
+      styleClass="w-20rem">
+      <div class="p-4">
+        <a class="cursor-pointer flex mb-4 p-6 items-center border border-surface-200 dark:border-surface-700 rounded hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors duration-150" (click)="openProfile()">
+          <span><i class="pi pi-user text-3xl text-primary"></i></span>
+          <div class="ml-5">
+            <span class="mb-2 font-semibold">Perfil</span>
+            <p class="text-surface-500 dark:text-surface-400 m-0">{{ (authService.user$ | async)?.nombre || 'Usuario' }}</p>
+          </div>
+        </a>
+        <a class="cursor-pointer flex mb-4 p-6 items-center border border-surface-200 dark:border-surface-700 rounded hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors duration-150" (click)="signOut()">
+          <span><i class="pi pi-power-off text-3xl text-primary"></i></span>
+          <div class="ml-5">
+            <span class="mb-2 font-semibold">Sign Out</span>
+          </div>
+        </a>
+      </div>
+    </p-drawer>
+
   </div>`,
 })
 export class AppTopbar {
   items!: MenuItem[];
+  profileDrawerVisible = false;
 
-  constructor(public layoutService: LayoutService) {}
+  constructor(public layoutService: LayoutService, public authService: AuthService, private router: Router) {}
 
   toggleDarkMode() {
     this.layoutService.layoutConfig.update((state) => ({ ...state, darkTheme: !state.darkTheme }));
   }
+
+  openProfileDrawer() {
+    this.profileDrawerVisible = true;
+  }
+
+  openProfile() {
+    this.profileDrawerVisible = false;
+    this.authService.user$.pipe(take(1)).subscribe(user => {
+      if (user?.rol === 'director') {
+        this.router.navigateByUrl('/director/configuracion');
+      } else {
+        this.router.navigateByUrl('/profesor/configuracion');
+      }
+    });
+  }
+
+  signOut() {
+    this.authService.logout().subscribe({
+      next: () => {
+        this.profileDrawerVisible = false;
+      },
+      error: (error) => {
+        console.error('Error al cerrar sesión:', error);
+        // Aún así, limpiar y redirigir
+        localStorage.removeItem('accessToken');
+        this.router.navigateByUrl('/login');
+      }
+    });
+  }
+
 }
