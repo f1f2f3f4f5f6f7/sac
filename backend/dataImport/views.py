@@ -813,22 +813,108 @@ def importar_inventario(request):
                         ubicacion_id, 1, responsable_id, 5,  # entregado_por = 1 (Luis Carlos), recibido_por = responsable_id
                         foto
                     ))
-                # === Consultar cuáles inventarios ya existen ===
+                                # === Consultar cuáles inventarios ya existen (antes de aplicar bloqueos) ===
                 existentes = []
                 nuevos = []
 
                 if inventarios_procesados:
                     cursor.execute(
                         "SELECT inventario FROM inventario_items WHERE inventario = ANY(%s)",
-                        (inventarios_procesados,)
+                        (inventarios_procesados,),
                     )
-                    existentes = [row[0] for row in cursor.fetchall()]
-                    nuevos = [inv for inv in inventarios_procesados if inv not in existentes]
-                
+                    existentes = [str(row[0]) for row in cursor.fetchall()]
+                    nuevos = [str(inv) for inv in inventarios_procesados if str(inv) not in existentes]
+
+                # === BLOQUEO: no importar items con trazabilidad COMPLETADO y accion baja/traslado ===
+                elementos_completados = []
+                inventarios_bloqueados = set()
+
+                if inventarios_procesados:
+                    # 1) Obtener ids de inventario_items para inventarios del archivo (solo los que ya existen)
+                    cursor.execute(
+                        """
+                        SELECT id, inventario
+                        FROM inventario_items
+                        WHERE inventario = ANY(%s)
+                        """,
+                        (inventarios_procesados,),
+                    )
+                    rows_ids = cursor.fetchall()
+                    id_to_inv = {rid: str(inv) for (rid, inv) in rows_ids}
+                    ids_inventario_items = list(id_to_inv.keys())
+
+                    # 2) Buscar trazas COMPLETADAS con accion baja/traslado
+                    if ids_inventario_items:
+                        cursor.execute(
+                            """
+                            SELECT
+                                ii.id,
+                                ii.inventario,
+                                ii.descripcion,
+                                ii.marca,
+                                ii.serial,
+                                ii.valor,
+                                ii.fecha_recibido,
+                                t.accion,
+                                t.fecha AS fecha_movimiento,
+                                t.detalle,
+                                t.estado,
+                                t.meta
+                            FROM inventario_trazabilidad t
+                            INNER JOIN inventario_items ii ON ii.id = t.inventario_id
+                            WHERE t.inventario_id = ANY(%s)
+                              AND LOWER(t.estado) = 'completado'
+                              AND LOWER(t.accion) IN ('baja', 'traslado')
+                            ORDER BY t.fecha DESC, t.id DESC
+                            """,
+                            (ids_inventario_items,),
+                        )
+
+                        cols = [c[0] for c in cursor.description]
+                        for row in cursor.fetchall():
+                            d = dict(zip(cols, row))
+
+                            # marcar inventario como bloqueado
+                            inventarios_bloqueados.add(str(d["inventario"]))
+
+                            # serializar fechas
+                            if d.get("fecha_recibido") and hasattr(d["fecha_recibido"], "isoformat"):
+                                d["fecha_recibido"] = d["fecha_recibido"].isoformat()
+                            if d.get("fecha_movimiento") and hasattr(d["fecha_movimiento"], "isoformat"):
+                                d["fecha_movimiento"] = d["fecha_movimiento"].isoformat()
+
+                            # parsear meta si viene como string
+                            if d.get("meta") and isinstance(d["meta"], str):
+                                try:
+                                    d["meta"] = json.loads(d["meta"])
+                                except Exception:
+                                    pass
+
+                            elementos_completados.append(d)
+
+                # 3) Filtrar records para NO insertar/actualizar bloqueados
+                if inventarios_bloqueados:
+                    records = [rec for rec in records if str(rec[0]) not in inventarios_bloqueados]
+
+                # 4) Recalcular inventarios_procesados para "procesados" (solo los que sí se importarán)
+                inventarios_procesados_importados = [str(r[0]) for r in records]
+
+                # 5) Recalcular existentes/nuevos respecto a los que sí se importarán
+                existentes = []
+                nuevos = []
+                if inventarios_procesados_importados:
+                    cursor.execute(
+                        "SELECT inventario FROM inventario_items WHERE inventario = ANY(%s)",
+                        (inventarios_procesados_importados,),
+                    )
+                    existentes = [str(row[0]) for row in cursor.fetchall()]
+                    nuevos = [inv for inv in inventarios_procesados_importados if inv not in existentes]
+
+                # 6) nuevos_detalle solo con los que sí se importan y son realmente nuevos
                 nuevos_detalle = []
                 if nuevos:
                     for rec in records:
-                        inv_numero = rec[0]
+                        inv_numero = str(rec[0])
                         if inv_numero in nuevos:
                             nuevos_detalle.append({
                                 "inventario": rec[0],
@@ -844,7 +930,8 @@ def importar_inventario(request):
                                 "escuela_id": rec[10],
                                 "foto": rec[11],
                             })
-                # === Batch UPSERT (actualizado para incluir foto) ===
+
+                # 7) Batch UPSERT solo con los records filtrados
                 if records:
                     execute_values(cursor, """
                         INSERT INTO inventario_items (
@@ -942,6 +1029,7 @@ def importar_inventario(request):
                 "inventarios_nuevos": nuevos_detalle,
                 "elementos_completados": elementos_completados,
                 "total_completados": len(elementos_completados),
+                "bloqueados_por_completado": list(inventarios_bloqueados)
                 
             },
             status=status.HTTP_201_CREATED,

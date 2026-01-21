@@ -867,6 +867,63 @@ def importar_inventario(request):
                         """,
                         records
                     )
+                
+
+                 # === Consultar elementos con estado "completado" en trazabilidad ===
+                elementos_completados = []
+                if inventarios_procesados:
+                    # Primero obtener los IDs de inventario_items para los inventarios procesados
+                    cursor.execute("""
+                        SELECT id, inventario 
+                        FROM inventario_items 
+                        WHERE inventario = ANY(%s)
+                    """, (inventarios_procesados,))
+                    inventario_ids_map = {row[1]: row[0] for row in cursor.fetchall()}
+                    
+                    # Obtener los IDs de inventario_items que tienen estado "completado"
+                    if inventario_ids_map:
+                        inventario_ids_list = list(inventario_ids_map.values())
+                        cursor.execute("""
+                            SELECT DISTINCT
+                                ii.id,
+                                ii.inventario,
+                                ii.descripcion,
+                                ii.marca,
+                                ii.serial,
+                                ii.valor,
+                                ii.fecha_recibido,
+                                t.accion,
+                                t.fecha as fecha_movimiento,
+                                t.detalle,
+                                t.estado,
+                                t.meta
+                            FROM inventario_items ii
+                            INNER JOIN inventario_trazabilidad t ON ii.id = t.inventario_id
+                            WHERE ii.id = ANY(%s)
+                                AND LOWER(t.estado) = 'completado'
+                            ORDER BY t.fecha DESC
+                        """, (inventario_ids_list,))
+                        
+                        columns = [col[0] for col in cursor.description]
+                        for row in cursor.fetchall():
+                            elemento = dict(zip(columns, row))
+                            # Convertir fecha a string si es necesario
+                            if elemento.get('fecha_recibido'):
+                                if hasattr(elemento['fecha_recibido'], 'isoformat'):
+                                    elemento['fecha_recibido'] = elemento['fecha_recibido'].isoformat()
+                            if elemento.get('fecha_movimiento'):
+                                if hasattr(elemento['fecha_movimiento'], 'isoformat'):
+                                    elemento['fecha_movimiento'] = elemento['fecha_movimiento'].isoformat()
+                            # Parsear meta si es JSON string
+                            if elemento.get('meta'):
+                                try:
+                                    elemento['meta'] = json.loads(elemento['meta']) if isinstance(elemento['meta'], str) else elemento['meta']
+                                except:
+                                    pass
+                            elementos_completados.append(elemento)
+
+
+    
 
         # Limpiar archivo temporal
         if temp_file_path and os.path.exists(temp_file_path):
@@ -882,7 +939,10 @@ def importar_inventario(request):
                 "usuarios_no_encontrados": list(set(not_found_usuarios)),
                 "nuevos": len(nuevos),
                 "repetidos": len(existentes),
-                "inventarios_nuevos": nuevos_detalle
+                "inventarios_nuevos": nuevos_detalle,
+                "elementos_completados": elementos_completados,
+                "total_completados": len(elementos_completados),
+                
             },
             status=status.HTTP_201_CREATED,
         )
