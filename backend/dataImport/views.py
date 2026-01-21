@@ -981,7 +981,8 @@ def obtener_inventario_usuario(request):
                 item = dict(zip(columns, row))
                 # Construir URL completa de la imagen si existe
                 if item.get('foto'):
-                    item['imagen_url'] = f"{settings.MEDIA_URL}{item['foto']}"
+                    base_url = request.build_absolute_uri('/')[:-1]
+                    item['imagen_url'] = f"{base_url}{settings.MEDIA_URL}{item['foto']}"
                 else:
                     item['imagen_url'] = None
                 items.append(item)
