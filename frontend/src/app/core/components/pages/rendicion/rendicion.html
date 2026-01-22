@@ -40,10 +40,11 @@
         @for (item of inventario; track $index; let first = $first) {
         <div class="col-span-12">
           <div class="flex flex-col sm:flex-row sm:items-center p-6 gap-4">
-            <div class="relative">
+            <div class="relative w-full sm:w-100">
               <p-image
                 class="w-full"
-                src="https://primefaces.org/cdn/primeng/images/demo/product/bamboo-watch.jpg"
+                [src]="'http://localhost:8000' + item.imagen_url"
+                (onImageError)="onImageError($event)"
                 alt="Image"
                 [preview]="true"
                 imageClass="w-full"
@@ -88,100 +89,10 @@
       </div>
     </ng-template>
   </p-dataview>
-  <p-dialog
-    header="Inventariar Item"
-    [modal]="true"
-    [(visible)]="visible"
-    [style]="{ width: '30rem' }"
-    (onShow)="onShowDialog()"
-    (onHide)="closeDialog()"
-  >
-    <section id="camera">
-      <video id="video"></video>
-      <canvas id="canvas">
-        <img src="" class="photo" alt="photo" />
-      </canvas>
-      @if(cameraStarted){
-      <div class="flex md:flex-row gap-2 mt-2">
-        <p-button
-          class="w-full"
-          styleClass="w-full"
-          [severity]="retake ? 'contrast' : 'primary'"
-          (onClick)="retake ? videoStream() : takePhoto()"
-          >{{ retake ? 'Retomar Foto' : 'Tomar Foto' }}</p-button
-        >
-      </div>
-      <div class="flex justify-center w-full mt-4">
-        <form
-          #exampleForm="ngForm"
-          (ngSubmit)="onSubmit(exampleForm)"
-          class="flex flex-col gap-4 w-full"
-        >
-          <div class="flex flex-col gap-1">
-            <p-select
-              #building="ngModel"
-              name="selectedBuilding"
-              [(ngModel)]="selectedBuilding"
-              [options]="edificios"
-              [invalid]="building.invalid && (building.touched || exampleForm.submitted)"
-              ]
-              optionLabel="name"
-              placeholder="Seleccionar edificio"
-              class="w-full"
-              required
-            />
-            @if (building.invalid && (building.touched || exampleForm.submitted)) {
-            <p-message severity="error" size="small" variant="simple"
-              >Edificio es requerido.</p-message
-            >
-            }
-          </div>
-          <div class="flex flex-col gap-1">
-            <p-inputnumber
-              required
-              #room="ngModel"
-              name="salon"
-              [(ngModel)]="salon"
-              [useGrouping]="false"
-              size="small"
-              placeholder="Salón"
-            />
-            @if (room.invalid && (room.touched || exampleForm.submitted)) {
-            <p-message severity="error" size="small" variant="simple">Salón es requerido.</p-message>
-            }
-          </div>
-          <div class="flex flex-col gap-1">
-            <textarea
-              pTextarea
-              required
-              #obs="ngModel"
-              name="observations"
-              [(ngModel)]="observations"
-              pSize="small"
-              placeholder="Observaciones"
-              rows="3"
-            ></textarea>
-            @if (obs.invalid && (obs.touched || exampleForm.submitted)) {
-            <p-message severity="error" size="small" variant="simple"
-              >Observaciones es requerido.</p-message
-            >
-            }
-          </div>
-          <button pButton type="submit" [disabled]="!(exampleForm.valid && retake && observations && salon)">
-            <span pButtonLabel>Enviar</span>
-          </button>
-        </form>
-      </div>
-      } @else {
-      <div id="spinner" class="card flex justify-center">
-        <p-progress-spinner
-          strokeWidth="8"
-          fill="transparent"
-          animationDuration=".5s"
-          [style]="{ width: '50px', height: '50px' }"
-        />
-      </div>
-      }
-    </section>
-  </p-dialog>
+  <app-edit-item
+    [visible]="visible"
+    [selectedItem]="selectedItem"
+    (hideModal)="closeDialog()"
+    (submitItem)="submitItem($event)"
+  ></app-edit-item>
 </section>

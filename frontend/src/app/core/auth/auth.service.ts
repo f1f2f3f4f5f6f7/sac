@@ -3,9 +3,11 @@ import { inject, Injectable } from '@angular/core';
 import { UserLogin, UserWithToken } from '../models/user.model';
 import { BehaviorSubject, ignoreElements, map, Observable, tap, take } from 'rxjs';
 import { Router } from '@angular/router';
+import { Role } from '../models/role.enum';
 
 const url = 'http://localhost:8000/api/accounts';
 const USER_LOCAL_STORAGE_KEY = 'accessToken';
+const ROLE_LOCAL_STORAGE_KEY = 'role';
 
 @Injectable({
   providedIn: 'root',
@@ -27,9 +29,18 @@ export class AuthService {
     return localStorage.getItem('accessToken') ?? '';
   }
 
+  set role(role: string) {
+    localStorage.setItem('role', role);
+  }
+
+  get role(): string {
+    return localStorage.getItem('role') ?? '';
+  }
+
   login(userLogin: UserLogin): Observable<never> {
     return this._httpClient.post<any>(`${url}/login/`, userLogin).pipe(
       tap((response) => {
+        this.role = response.user.rol;
         this.accessToken = response.token;
       }),
       tap((response) => {
@@ -43,7 +54,6 @@ export class AuthService {
   }
 
   userLogged(user: UserWithToken | null): void {
-    console.log(user);
     this.user.next(user);
   }
 
@@ -73,6 +83,7 @@ export class AuthService {
       tap(() => {
         // Limpiar token del localStorage
         localStorage.removeItem(USER_LOCAL_STORAGE_KEY);
+        localStorage.removeItem(ROLE_LOCAL_STORAGE_KEY);
         // Limpiar usuario del estado
         this.userLogged(null);
         // Redirigir al login

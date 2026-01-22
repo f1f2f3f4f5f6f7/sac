@@ -13,13 +13,10 @@ import { InputIconModule } from 'primeng/inputicon';
 import { CommonModule } from '@angular/common';
 import { TagModule } from 'primeng/tag';
 import { ImageModule } from 'primeng/image';
-import { DialogModule } from 'primeng/dialog';
 import { BarcodeReader } from '../../../utils/barcode-reader/barcode-reader';
-import { ProgressSpinnerModule } from 'primeng/progressspinner';
+import { EditItem } from '../../../utils/edit-item/edit-item';
 import { MessageModule } from 'primeng/message';
 import { ToastModule } from 'primeng/toast';
-import { TextareaModule } from 'primeng/textarea';
-import { InputNumber } from 'primeng/inputnumber';
 import { IBuilding } from '../../../models/buildingModel';
 import { BuildingService } from '../../../services/buildings/building.service';
 
@@ -37,12 +34,9 @@ import { BuildingService } from '../../../services/buildings/building.service';
     BarcodeReader,
     TagModule,
     ImageModule,
-    ProgressSpinnerModule,
-    DialogModule,
     MessageModule,
     ToastModule,
-    TextareaModule,
-    InputNumber,
+    EditItem,
   ],
   templateUrl: './rendicion.html',
   styleUrl: './rendicion.scss',
@@ -112,28 +106,6 @@ export class Rendicion implements OnInit, OnDestroy {
         },
       });
 
-    this.buildingService.buildings$
-      .pipe(
-        takeUntil(this.$destroy),
-        switchMap((data) => {
-          if (data.length === 0) {
-            return this.buildingService.getBuildings();
-          }
-          return of(data);
-        })
-      )
-      .subscribe({
-        next: (data: any) => {
-          this.edificios = data.map((building: any) => ({
-            name: building.edificio,
-            value: building.id,
-          }));
-        },
-        error: () => {
-          this.errorMessage('Error al cargar los edificios');
-        },
-      });
-
     this.sortOptions = [
       { label: 'Inventariados', value: true },
       { label: 'No inventariados', value: false },
@@ -164,112 +136,35 @@ export class Rendicion implements OnInit, OnDestroy {
     this.selectedItem = item;
   }
 
-  async onShowDialog() {
-    this.video = document.getElementById('video') as HTMLVideoElement;
-    this.canvas = document.getElementById('canvas') as HTMLCanvasElement;
-    this.button = document.getElementById('startbutton') as HTMLButtonElement;
-    this.photo = document.querySelector('.photo') as HTMLImageElement;
-    this.video.style.height = '0';
-    await this.videoStream();
-  }
-
-  async videoStream() {
-    this.retake = false;
-    this.canvas.style.display = 'none';
-    this.video.style.display = 'flex';
-    const constraints = {
-      video: { facingMode: 'environment', width: 640, height: 480 },
-      audio: false,
-    };
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      this.video.srcObject = stream;
-      this.video.play();
-      this.video.style.height = '383px';
-      this.cameraStarted = true;
-    } catch (error) {
-      console.log('⚠️ No se pudo iniciar la cámara:', error);
-    }
-  }
-
-  takePhoto() {
-    this.retake = true;
-    this.video.style.display = 'none';
-    this.canvas.style.display = 'flex';
-    this.canvas.width = this.video.videoWidth;
-    this.canvas.height = this.video.videoHeight;
-    const context = this.canvas.getContext('2d');
-    context?.drawImage(this.video, 0, 0, this.canvas.width, this.canvas.height);
-    const dataUrl = this.canvas.toDataURL('image/png');
-    this.photo.setAttribute('src', dataUrl);
-  }
-
   closeDialog() {
     this.visible = false;
-
-    const stream = this.video.srcObject as MediaStream | null;
-
-    if (stream) {
-      const tracks = stream.getTracks();
-      tracks.forEach((track) => track.stop());
-    }
-
-    this.video.srcObject = null;
-    this.video.pause();
   }
 
-  async onSubmit(form: NgForm) {
-    if (form.valid && this.retake) {
-      const file = await this.canvasToFile(this.canvas);
-      const inventario = this.selectedItem?.inventario || '';
-      const inventaryObject: IInvetaryItemToInventoried = {
-        inventario: inventario,
-        inventoried: true,
-        observations: this.observations,
-        ubicacion: this.selectedBuilding.value,
-        salon: this.salon?.toString() || '',
-      };
-      this.closeDialog();
-      this.inventaryServices.updateItem(inventaryObject, file).subscribe({
-        next: (res: any) => {
-          this.inventario = this.inventario.map((item) => {
-            if (item.inventario !== inventario) return item;
-            console.log(inventaryObject);
-            
-            return {
-              ...item,
-              inventoried: true,
-              observations: inventaryObject.observations,
-              ubicacion: this.getUbicationName(inventaryObject.ubicacion),
-              salon: inventaryObject.salon,
-              imagen_url: res.foto_url,
-            };
-          });
-          this.messageService.add({
-            severity: 'success',
-            summary: 'Éxito',
-            detail: 'Inventario actualizado correctamente',
-          });
-          this.inventaryServices.inventary = this.inventario;
-          console.log(this.inventario);
-        },
-        error: (err) => this.errorMessage('Error al actualizar el inventario'),
-      });
+  submitItem($event: { inventaryObject: IInvetaryItemToInventoried; file: File }) {
+    const { inventaryObject, file } = $event;
+    const inventario = inventaryObject.inventario
+    this.inventaryServices.updateItem(inventaryObject, file).subscribe({
+      next: (res: any) => {
+        this.inventario = this.inventario.map((item) => {
+          if (item.inventario !== inventario) return item;
 
-      form.resetForm();
-    }
-  }
-
-  canvasToFile(canvas: HTMLCanvasElement): Promise<File> {
-    return new Promise((resolve, reject) => {
-      canvas.toBlob((blob) => {
-        if (!blob) {
-          reject('No se pudo generar el blob');
-          return;
-        }
-        const file = new File([blob], 'foto.png', { type: 'image/png' });
-        resolve(file);
-      }, 'image/png');
+          return {
+            ...item,
+            inventoried: true,
+            observations: inventaryObject.observations,
+            ubicacion: inventaryObject.edificio || item.ubicacion,
+            salon: inventaryObject.salon,
+            imagen_url: res.foto_url,
+          };
+        });
+        this.messageService.add({
+          severity: 'success',
+          summary: 'Éxito',
+          detail: 'Inventario actualizado correctamente',
+        });
+        this.inventaryServices.inventary = this.inventario;
+      },
+      error: (err) => this.errorMessage('Error al actualizar el inventario'),
     });
   }
 
@@ -278,9 +173,13 @@ export class Rendicion implements OnInit, OnDestroy {
     this.$destroy.complete();
   }
 
-  getUbicationName(id: number){
-    const building = this.edificios.find(b => b.value === id);
+  getUbicationName(id: number) {
+    const building = this.edificios.find((b) => b.value === id);
     return building ? building.name : 'Desconocido';
+  }
+
+  onImageError(event: any) {
+    event.target.src = 'http://localhost:8000/media/inventario_images/noimage.webp';
   }
 
   errorMessage(message: string) {
