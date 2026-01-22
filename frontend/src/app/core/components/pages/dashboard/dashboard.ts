@@ -7,7 +7,7 @@ import { IconFieldModule } from 'primeng/iconfield';
 import { InputIconModule } from 'primeng/inputicon';
 import { InputTextModule } from 'primeng/inputtext';
 import { ButtonModule } from 'primeng/button';
-import { IInventaryItem } from '../../../models/inventary.model';
+import { IInventaryItem, IInvetaryItemToInventoried } from '../../../models/inventary.model';
 import { ToastModule } from 'primeng/toast';
 import { BarcodeReader } from '../../../utils/barcode-reader/barcode-reader';
 import { FormsModule } from '@angular/forms';
@@ -16,6 +16,7 @@ import { SelectButtonModule } from 'primeng/selectbutton';
 import { MessageModule } from 'primeng/message';
 import { FILEEVENTUPLOAD } from '../../../models/fileEvent.model';
 import { of, Subject, switchMap, takeUntil, tap } from 'rxjs';
+import { EditItem } from '../../../utils/edit-item/edit-item';
 
 @Component({
   selector: 'app-dashboard',
@@ -32,6 +33,7 @@ import { of, Subject, switchMap, takeUntil, tap } from 'rxjs';
     DialogModule,
     SelectButtonModule,
     MessageModule,
+    EditItem,
   ],
   standalone: true,
   templateUrl: './dashboard.html',
@@ -41,7 +43,8 @@ import { of, Subject, switchMap, takeUntil, tap } from 'rxjs';
 export class Dashboard implements OnInit, OnDestroy {
   uploadedFiles: any[] = [];
   inventario: IInventaryItem[] = [];
-  selectedItem!: IInventaryItem[] | null;
+  selectedItems: IInventaryItem[] = [];
+  selectedItem!: IInventaryItem | null;
   @ViewChild('dt') dt!: Table;
   globalQuery: string = '';
   visible: boolean = false;
@@ -78,8 +81,7 @@ export class Dashboard implements OnInit, OnDestroy {
       .subscribe({
         next: (data) => {
           this.inventario = data;
-          console.log(data);
-          
+          console.log(this.inventario);
         },
         error: () => {
           this.messageService.add({
@@ -117,7 +119,6 @@ export class Dashboard implements OnInit, OnDestroy {
       .pipe(takeUntil(this.$destroy))
       .subscribe({
         next: (res: any) => {
-          console.log(res);
           this.messageService.add({
             severity: 'info',
             summary: 'Archivo Cargado',
@@ -129,7 +130,6 @@ export class Dashboard implements OnInit, OnDestroy {
           this.inventaryServices.inventary = this.inventario;
         },
         error: (err) => {
-          console.log(err);
           this.messageService.add({
             severity: 'error',
             summary: 'Fallo al cargar archivo',
@@ -156,7 +156,47 @@ export class Dashboard implements OnInit, OnDestroy {
     throw new Error('Method not implemented.');
   }
   editItem(item: IInventaryItem) {
-    throw new Error('Method not implemented.');
+    this.selectedItem = item;
+    this.visible = true;
+  }
+
+  submitItem($event: { inventaryObject: IInvetaryItemToInventoried; file: File }) {
+    const { inventaryObject, file } = $event;
+    const inventario = inventaryObject.inventario;
+    this.inventaryServices.updateItem(inventaryObject, file).subscribe({
+      next: (res: any) => {
+        this.inventario = this.inventario.map((item) => {
+          if (item.inventario !== inventario) return item;
+
+          return {
+            ...item,
+            observations: inventaryObject.observations,
+            ubicacion: inventaryObject.edificio || item.ubicacion,
+            salon: inventaryObject.salon,
+            imagen_url: res.foto_url,
+          };
+        });
+        this.messageService.add({
+          severity: 'success',
+          summary: 'Éxito',
+          detail: 'Inventario actualizado correctamente',
+        });
+        this.inventaryServices.inventary = this.inventario;
+      },
+      error: (err) => this.errorMessage('Error al actualizar el inventario'),
+    });
+  }
+
+  onImageError(event: any) {
+    event.target.src = 'http://localhost:8000/media/inventario_images/noimage.webp';
+  }
+
+  errorMessage(message: string) {
+    this.messageService.add({
+      severity: 'error',
+      summary: 'Error',
+      detail: message,
+    });
   }
 
   ngOnDestroy(): void {

@@ -61,8 +61,9 @@
     [rowHover]="true"
     [paginator]="true"
     [globalFilterFields]="['inventario']"
-    [(selection)]="selectedItem"
-    dataKey="id"
+    [(selection)]="selectedItems"
+    selectionMode="multiple"
+    dataKey="inventario"
     currentPageReportTemplate="Mostrando {first} hasta {last} de {totalRecords} items"
     [showCurrentPageReport]="true"
     [rowsPerPageOptions]="[10, 20, 30]"
@@ -101,15 +102,16 @@
     <ng-template #body let-item let-index="rowIndex">
       <tr>
         <td style="width: 3rem">
-          <p-tableCheckbox [value]="inventaryItem" />
+          <p-tableCheckbox [value]="item" />
         </td>
         <td>{{ index + 1 }}</td>
         <td style="min-width: 12rem">{{ item.inventario }}</td>
         <td>{{ item.descripcion }}</td>
         <td>
           <img
-            [src]="'https://primefaces.org/cdn/primeng/images/demo/product/' + 'bamboo-watch.jpg'"
+            [src]="'http://localhost:8000' + item.imagen_url"
             class="w-24 rounded"
+            (error)="onImageError($event)"
           />
         </td>
         <td>{{ item.valor }}</td>
@@ -136,4 +138,10 @@
   }@else {
   <p>No hay inventario</p>
   }
+  <app-edit-item
+    [visible]="visible"
+    [selectedItem]="selectedItem"
+    (hideModal)="closeDialog()"
+    (submitItem)="submitItem($event)"
+  ></app-edit-item>
 </section>

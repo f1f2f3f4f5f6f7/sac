@@ -5,8 +5,5 @@ import { RoleType } from '../models/role.enum';
 
 export function hasRole(allowedRoles: RoleType[]) {
   return () =>
-    inject(AuthService).user$.pipe(
-      map((user) => Boolean(user && allowedRoles.includes(user.rol))),
-      tap((hasRole) => hasRole === false && alert('Acceso Denegado'))
-    );
+    allowedRoles.includes(inject(AuthService).role as RoleType) ? true : alert('Access Denied: You do not have the required role to access this page.');
 }
