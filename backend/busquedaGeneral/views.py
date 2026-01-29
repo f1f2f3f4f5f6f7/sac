@@ -105,3 +105,23 @@ def listar_edificios(request):
             {"error": f"Error al obtener edificios: {str(e)}"},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+
+
+@api_view(["GET"])
+@login_required_api
+def listar_escuelas(request):
+    """
+    Retorna una lista de todas las escuelas disponibles.
+    """
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT id, nombre FROM escuelas ORDER BY nombre")
+            rows = cursor.fetchall()
+            escuelas = [{"id": r[0], "nombre": r[1]} for r in rows]
+            return Response({"success": True, "escuelas": escuelas, "total": len(escuelas)})
+    except Exception as e:
+        return Response(
+            {"error": f"Error al obtener escuelas: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
