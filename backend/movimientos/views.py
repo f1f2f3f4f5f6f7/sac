@@ -1838,7 +1838,7 @@ def confirmar_o_cancelar_baja(request):
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
 
-        @api_view(["POST"])
+@api_view(["POST"])
 @login_required_api
 def confirmar_cancelar_prestamo(request):
     """
