@@ -1,0 +1,302 @@
+<p-toast />
+<div id="body" class="card flex justify-center">
+  <p-stepper [(value)]="activeStep" class="basis-[100rem]">
+    <p-step-list>
+      <p-step [value]="1" class="flex flex-row flex-auto gap-2">
+        <ng-template #content let-activateCallback="activateCallback" let-value="value">
+          <button
+            class="bg-transparent border-0 inline-flex flex-col gap-2"
+            (click)="activateCallback()"
+          >
+            <span
+              class="rounded-full border-2 w-12 h-12 inline-flex items-center justify-center"
+              [ngClass]="{
+                'bg-primary text-primary-contrast border-primary': value <= activeStep,
+                'border-surface': value > activeStep
+              }"
+            >
+              <i class="pi pi-plus"></i>
+            </span>
+          </button>
+        </ng-template>
+      </p-step>
+      <p-step
+        [value]="2"
+        [disabled]="seletectedItems.length === 0"
+        class="flex flex-row flex-auto gap-2"
+      >
+        <ng-template #content let-activateCallback="activateCallback" let-value="value">
+          <button
+            class="bg-transparent border-0 inline-flex flex-col gap-2"
+            (click)="activateCallback()"
+          >
+            <span
+              class="rounded-full border-2 w-12 h-12 inline-flex items-center justify-center"
+              [ngClass]="{
+                'bg-primary text-primary-contrast border-primary': value <= activeStep,
+                'border-surface': value > activeStep
+              }"
+            >
+              <i class="pi pi-book"></i>
+            </span>
+          </button>
+        </ng-template>
+      </p-step>
+      <p-step
+        [value]="3"
+        class="flex flex-row flex-auto gap-2"
+        [disabled]="inventaryToWriteOff.length === 0"
+      >
+        <ng-template #content let-activateCallback="activateCallback" let-value="value">
+          <button
+            class="bg-transparent border-0 inline-flex flex-col gap-2"
+            (click)="activateCallback()"
+          >
+            <span
+              class="rounded-full border-2 w-12 h-12 inline-flex items-center justify-center"
+              [ngClass]="{
+                'bg-primary text-primary-contrast border-primary': value <= activeStep,
+                'border-surface': value > activeStep
+              }"
+            >
+              <i class="pi pi-check-square"></i>
+            </span>
+          </button>
+        </ng-template>
+      </p-step>
+    </p-step-list>
+    <p-step-panels>
+      <p-step-panel [value]="1">
+        <ng-template #content let-activateCallback="activateCallback">
+          <div class="card">
+            <p-table
+              #dt
+              [value]="inventario"
+              selectionMode="multiple"
+              [(selection)]="seletectedItems"
+              [metaKeySelection]="metaKey"
+              dataKey="inventario"
+              [globalFilterFields]="['inventario']"
+              [paginator]="true"
+              [rows]="5"
+              [tableStyle]="{ width: '100%', 'table-layout': 'fixed' }"
+            >
+              <ng-template #caption>
+                <div class="flex items-center justify-between">
+                  <h5 class="m-0">Inventario</h5>
+                  <p-iconfield>
+                    <p-inputicon class="pi pi-search" />
+                    <input
+                      pInputText
+                      type="text"
+                      [(ngModel)]="globalQuery"
+                      (ngModelChange)="dt.filterGlobal($event, 'contains')"
+                      placeholder="Buscar..."
+                    />
+                  </p-iconfield>
+                  <app-barcode-reader (dataSent)="getBarcodeNumber($event)"></app-barcode-reader>
+                </div>
+                <div>Items: {{ inventario.length }}</div>
+                <div class="flex items-center justify-between mt-2">
+                  Items seleccionados: {{ seletectedItems.length || 0 }}
+                  <p-button
+                    [disabled]="seletectedItems.length === 0"
+                    (onClick)="activateCallback(2)"
+                    label="Siguiente"
+                    icon="pi pi-arrow-right"
+                    iconPos="right"
+                  />
+                </div>
+              </ng-template>
+
+              <ng-template #header>
+                <tr>
+                  <th style="width: 5%">Ind</th>
+                  <th style="width: 20%">Imagen</th>
+                  <th style="width: 16%">Inventario</th>
+                  <th style="width: 25%">Ubicación</th>
+                  <th style="width: 10%">Inv</th>
+                </tr>
+              </ng-template>
+              <ng-template #body let-item let-rowIndex="rowIndex">
+                <tr (click)="getData()" [pSelectableRow]="item" [pSelectableRowIndex]="rowIndex">
+                  <td>{{ rowIndex + 1 }}</td>
+                  <td>
+                    <img
+                      [src]="'http://localhost:8000' + item.imagen_url"
+                      class="w-24 rounded"
+                      (error)="onImageError($event)"
+                    />
+                  </td>
+                  <td>{{ item.inventario }}</td>
+                  <td>{{ item.ubicacion }}</td>
+                  <td>
+                    <p-badge class="pi pi-box" badgeSize="small" [severity]="getSeverity(item)" />
+                  </td>
+                </tr>
+              </ng-template>
+            </p-table>
+          </div>
+          <div class="flex pb-6 pr-6 pl-6 justify-end">
+            <p-button
+              [disabled]="seletectedItems.length === 0"
+              (onClick)="activateCallback(2)"
+              label="Siguiente"
+              icon="pi pi-arrow-right"
+              iconPos="right"
+            />
+          </div>
+        </ng-template>
+      </p-step-panel>
+      <p-step-panel [value]="2">
+        <ng-template #content let-activateCallback="activateCallback">
+          <div class="card m-2">
+            <span>Items Seleccionados:</span>
+            @for (item of seletectedItems; track $index) {
+            <p-tag class="m-1" severity="info" [value]="item.inventario" />
+            }
+
+            <p-select
+              class="mb-6"
+              [options]="paths"
+              [(ngModel)]="selectedPath"
+              optionLabel="name"
+              placeholder="Seleccionar trámite"
+              appendTo="body"
+              fluid
+            />
+            @if (selectedPath?.code === 'DB') { @for (item of inventaryToWriteOff; track $index) {
+            <div class="flex flex-wrap md:flex-nowrap gap-2 mt-4 w-full">
+              <p-iconfield class="w-full md:w-auto">
+                <p-inputicon class="pi pi-book" />
+                <input
+                  disabled
+                  [value]="item.inventario"
+                  type="text"
+                  pInputText
+                  class="w-full md:w-50"
+                  placeholder="Search"
+                />
+              </p-iconfield>
+              <p-iconfield class="flex-1 w-full">
+                <p-inputicon class="pi pi-delete-left" />
+                <input
+                  #inputReason
+                  (blur)="updateValue(item.inventario, inputReason.value)"
+                  [value]="item.motivo"
+                  class="w-full"
+                  type="text"
+                  pInputText
+                  placeholder="Motivo"
+                />
+              </p-iconfield>
+            </div>
+            } } @else if (selectedPath?.code === 'PE') {
+
+            <div class="flex flex-wrap md:flex-nowrap gap-4 mt-2 sm:gap-2">
+              <p-floatlabel class="w-full" variant="on">
+                <p-select
+                  [options]="paths"
+                  [(ngModel)]="selectedPath"
+                  optionLabel="name"
+                  class="w-full"
+                  inputId="over_label"
+                />
+                <label for="over_label">Usuario Solicitante</label>
+              </p-floatlabel>
+
+              <p-floatlabel class="w-full" variant="on">
+                <p-select
+                  [options]="paths"
+                  [(ngModel)]="selectedPath"
+                  optionLabel="name"
+                  placeholder="Select a City"
+                  class="w-full"
+                  inputId="over_label"
+                />
+                <label for="over_label">Unidad Entidad</label>
+              </p-floatlabel>
+            </div>
+            <div class="flex flex-wrap md:flex-nowrap gap-4 mt-2 sm:gap-2">
+              <p-iconfield class="w-full">
+                <p-inputicon class="pi pi-users" />
+                <input type="text" pInputText placeholder="Nombre Proyecto" class="w-full" />
+              </p-iconfield>
+              <p-iconfield class="w-full">
+                <p-inputicon class="pi pi-search" />
+                <input type="text" pInputText placeholder="Justificación" class="w-full" />
+              </p-iconfield>
+            </div>
+            }
+            <div class="flex pt-6 justify-between">
+              <p-button
+                (onClick)="activateCallback(1)"
+                label="Atras"
+                severity="secondary"
+                icon="pi pi-arrow-left"
+              />
+              <p-button
+                [disabled]="!this.selectedPath"
+                (onClick)="activateCallback(3)"
+                label="Siguiente"
+                icon="pi pi-arrow-right"
+                iconPos="right"
+              />
+            </div>
+          </div>
+        </ng-template>
+      </p-step-panel>
+      <p-step-panel [value]="3">
+        <ng-template #content let-activateCallback="activateCallback">
+          <div class="card m-2">
+            <span>Items Seleccionados:</span>
+            @for (item of seletectedItems; track $index) {
+            <p-tag class="m-1" severity="info" [value]="item.inventario" />
+            } @if (selectedPath?.code === 'DB') { @for (item of inventaryToWriteOff; track $index) {
+            <div class="flex flex-wrap md:flex-nowrap gap-2 mt-4 w-full">
+              <p-iconfield class="w-full md:w-auto">
+                <p-inputicon class="pi pi-book" />
+                <input
+                  disabled
+                  [value]="item.inventario"
+                  type="text"
+                  pInputText
+                  class="w-full md:w-50"
+                  placeholder="Search"
+                />
+              </p-iconfield>
+              <p-iconfield class="flex-1 w-full">
+                <p-inputicon class="pi pi-delete-left" />
+                <input
+                  #inputReason
+                  (blur)="updateValue(item.inventario, inputReason.value)"
+                  [value]="item.motivo"
+                  disabled
+                  class="w-full"
+                  type="text"
+                  pInputText
+                  placeholder="Motivo"
+                />
+              </p-iconfield>
+            </div>
+            } }
+            <div class="flex pt-6 justify-between">
+              <p-button
+                (onClick)="activateCallback(2)"
+                label="Atras"
+                severity="secondary"
+                icon="pi pi-arrow-left"
+              />
+              <p-button
+                (onClick)="confirmTramite()"
+                label="Confirmar"
+                icon="pi pi-arrow-right"
+                iconPos="right"
+              />
+            </div>
+          </div>
+        </ng-template>
+      </p-step-panel>
+    </p-step-panels>
+  </p-stepper>
+</div>

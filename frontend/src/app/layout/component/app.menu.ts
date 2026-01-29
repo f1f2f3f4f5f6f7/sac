@@ -46,6 +46,12 @@ export class AppMenu implements OnInit {
                                 { label: 'Rendición de Inventarío', icon: 'pi pi-fw pi-id-card', routerLink: ['/profesor/rendicion'] },
                                 { label: 'Busqueda General', icon: 'pi pi-fw pi-search', routerLink: ['/profesor/busqueda'] },
                             ]
+                        },
+                        {
+                            label: 'Movimientos',
+                            items: [
+                                { label: 'Tramites', icon: 'pi pi-fw pi-arrow-right-arrow-left', routerLink: ['/profesor/tramites'] },
+                            ]
                         }
                     ];
                 }

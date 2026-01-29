@@ -81,7 +81,6 @@ export class Dashboard implements OnInit, OnDestroy {
       .subscribe({
         next: (data) => {
           this.inventario = data;
-          console.log(this.inventario);
         },
         error: () => {
           this.messageService.add({

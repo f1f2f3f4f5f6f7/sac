@@ -83,6 +83,7 @@
         </p-iconfield>
         <app-barcode-reader (dataSent)="getBarcodeNumber($event)"></app-barcode-reader>
       </div>
+      <div>Items: {{ inventario.length }}</div>
     </ng-template>
 
     <ng-template #header>

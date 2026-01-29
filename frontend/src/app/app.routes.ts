@@ -1,8 +1,15 @@
 import { Routes } from '@angular/router';
 import { authGuard } from './core/auth/auth-guard';
 import { hasRole } from './core/auth/has-role-guard';
+import { redirectByRoleGuard } from './core/auth/redirect-by-role-guard';
 
 export const routes: Routes = [
+{
+    path: '',
+    pathMatch: 'full',
+    canActivate: [redirectByRoleGuard],
+    children: []
+  },
   {
     path: 'login',
     loadComponent: () => import('./core/components/pages/login/login').then((m) => m.Login),
@@ -51,6 +58,12 @@ export const routes: Routes = [
         loadComponent: () =>
           import('./core/components/pages/configuracionUsuario/configuracionUsuario').then((m) => m.ConfiguracionUsuarioComponent),
       },
+      {
+        path: 'tramites',
+        canActivate: [authGuard],
+        loadComponent: () =>
+          import('./core/components/pages/tramites/tramites').then((m) => m.Tramites),
+      }
     ],
   },
 ];
