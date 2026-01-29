@@ -17,6 +17,34 @@ from rest_framework import status
 from accounts.views import login_required_api
 import textwrap
 from openpyxl.utils import get_column_letter
+from django.db import connection, transaction
+
+
+
+def _formatear_fecha_ddmmaaaa(fecha: date) -> str:
+    """
+    Devuelve la fecha con el formato:
+    'D: 20   M: 08    A: 2025'
+    """
+    return f"D: {fecha.day:02d}   M: {fecha.month:02d}    A:  {fecha.year}"
+
+
+def _set_merged_safe(ws, coord: str, value, alignment: Alignment | None = None):
+    """
+    Escribe en 'coord'. Si esa celda está dentro de un rango combinado,
+    realmente escribe en la esquina superior izquierda de ese rango.
+    Así evitamos el error de MergedCell read-only.
+    """
+    target_coord = coord
+    for rng in ws.merged_cells.ranges:
+        if coord in rng:
+            target_coord = rng.coord.split(":")[0]  # esquina superior izquierda
+            break
+
+    cell = ws[target_coord]
+    cell.value = value
+    if alignment is not None:
+        cell.alignment = alignment
 
 def _get_effective_width_chars(ws, coord: str) -> int:
     """
@@ -126,24 +154,140 @@ def autofit_row_height_fixed(
         min_height = base_height
     ws.row_dimensions[row].height = min(max(height, min_height), max_height)
 
+def _validar_no_movido_completado_por_usuario(user_id: int, item_ids: list[int]):
+    """
+    Bloquea si alguno de los items ya tiene trazabilidad COMPLETADA del mismo usuario
+    con accion = baja o traslado. Prestamo NO bloquea.
+    """
+    if not user_id or not item_ids:
+        return []
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT
+                ii.inventario::text AS numero_inventario,
+                t.accion,
+                t.fecha
+            FROM inventario_trazabilidad t
+            JOIN inventario_items ii ON ii.id = t.inventario_id
+            WHERE t.usuario_id = %s
+              AND t.inventario_id = ANY(%s)
+              AND LOWER(COALESCE(t.estado,'')) = 'completado'
+              AND LOWER(COALESCE(t.accion,'')) IN ('baja','traslado')
+            ORDER BY t.fecha DESC, t.id DESC
+            """,
+            [user_id, item_ids],
+        )
+        rows = cursor.fetchall()
+
+    bloqueados = []
+    for inv, accion, fecha in rows:
+        bloqueados.append(
+            {
+                "inventario": inv,
+                "accion_completada": accion,
+                "fecha": fecha.isoformat() if hasattr(fecha, "isoformat") else str(fecha),
+            }
+        )
+    return bloqueados
+
+def _validar_no_movido_pendiente_por_usuario(user_id: int, item_ids: list[int]):
+    """
+    Bloquea si alguno de los items ya tiene trazabilidad PENDIENTE del mismo usuario
+    con accion = baja o traslado.
+    """
+    if not user_id or not item_ids:
+        return []
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT
+                ii.inventario::text AS numero_inventario,
+                t.accion,
+                t.fecha
+            FROM inventario_trazabilidad t
+            JOIN inventario_items ii ON ii.id = t.inventario_id
+            WHERE t.usuario_id = %s
+              AND t.inventario_id = ANY(%s)
+              AND LOWER(COALESCE(t.estado,'')) = 'pendiente'
+              AND LOWER(COALESCE(t.accion,'')) IN ('baja','traslado')
+            ORDER BY t.fecha DESC, t.id DESC
+            """,
+            [user_id, item_ids],
+        )
+        rows = cursor.fetchall()
+
+    return [
+        {
+            "inventario": inv,
+            "accion_pendiente": accion,
+            "fecha": fecha.isoformat() if hasattr(fecha, "isoformat") else str(fecha),
+        }
+        for inv, accion, fecha in rows
+    ]
+
+
+def _validar_prestamo_activo_por_elemento(item_ids: list[int]):
+    """
+    Bloquea préstamo si el elemento ya tiene un PRÉSTAMO PENDIENTE
+    y la fecha_devolucion (guardada en meta->>'fecha_devolucion') aún no ha llegado.
+    Se valida POR ELEMENTO (sin importar usuario) para evitar doble préstamo.
+    """
+    if not item_ids:
+        return []
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT
+                ii.inventario::text AS numero_inventario,
+                t.usuario_id,
+                t.fecha,
+                (to_date(NULLIF(t.meta->>'fecha_devolucion',''), 'YYYY-MM-DD')) AS fecha_devolucion
+            FROM inventario_trazabilidad t
+            JOIN inventario_items ii ON ii.id = t.inventario_id
+            WHERE t.inventario_id = ANY(%s)
+              AND LOWER(COALESCE(t.estado,'')) = 'pendiente'
+              AND LOWER(COALESCE(t.accion,'')) = 'prestamo'
+              AND to_date(NULLIF(t.meta->>'fecha_devolucion',''), 'YYYY-MM-DD') IS NOT NULL
+              AND CURRENT_DATE <= to_date(NULLIF(t.meta->>'fecha_devolucion',''), 'YYYY-MM-DD')
+            ORDER BY t.fecha DESC, t.id DESC
+            """,
+            [item_ids],
+        )
+        rows = cursor.fetchall()
+
+    bloqueados = []
+    for inv, usuario_id, fecha, fecha_dev in rows:
+        bloqueados.append(
+            {
+                "inventario": inv,
+                "prestamo_usuario_id": usuario_id,
+                "fecha_prestamo": fecha.isoformat() if hasattr(fecha, "isoformat") else str(fecha),
+                "fecha_devolucion": fecha_dev.isoformat() if hasattr(fecha_dev, "isoformat") else str(fecha_dev),
+            }
+        )
+    return bloqueados
+
+
+
 
 @api_view(["POST"])
 @login_required_api
 def solicitud_baja(request):
     """
-    Genera el formato de baja en Excel a partir de:
-    - inventario (inventario_items.inventario)
-    - motivo  (texto libre)
-
-    Body:
-    {
-        "items": [
-            { "inventario": "1001", "motivo": "Deterioro" },
-            { "inventario": "1002", "motivo": "Pérdida" }
-        ]
-    }
+    Genera el formato de baja en Excel.
+    Bloquea si el item ya tiene BAJA/TRASLADO en estado PENDIENTE para el mismo usuario.
+    Registra trazabilidad con estado = 'pendiente'.
     """
     try:
+        # ✅ Usuario autenticado
+        user_id = getattr(request, "user_id", None) or getattr(getattr(request, "user", None), "id", None)
+        if not user_id:
+            return Response({"error": "No se pudo identificar al usuario autenticado."}, status=status.HTTP_401_UNAUTHORIZED)
+
         items = request.data.get("items")
         if not items or not isinstance(items, list):
             return Response(
@@ -178,8 +322,8 @@ def solicitud_baja(request):
             cursor.execute(
                 """
                 SELECT 
-                    ii.id,              -- PK de inventario_items
-                    ii.inventario,      -- número de inventario
+                    ii.id,
+                    ii.inventario,
                     ii.descripcion,
                     ii.categoria_id,
                     ii.recibido_por_id,
@@ -198,7 +342,6 @@ def solicitud_baja(request):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        # Mapear por inventario
         campos_por_inv = {}
         responsables_nombres = set()
 
@@ -222,7 +365,6 @@ def solicitud_baja(request):
             if usuario_nombre:
                 responsables_nombres.add(usuario_nombre)
 
-        # Verificar inventarios no encontrados
         no_encontrados = [inv for inv in inventarios_unicos if inv not in campos_por_inv]
         if no_encontrados:
             return Response(
@@ -233,7 +375,19 @@ def solicitud_baja(request):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # --- 3. Determinar el nombre para el campo "De:" ---
+        # ✅ BLOQUEO por PENDIENTE (baja/traslado)
+        item_ids = [campos_por_inv[inv]["id"] for inv in inventarios_unicos]
+        bloqueados = _validar_no_movido_pendiente_por_usuario(user_id, item_ids)
+        if bloqueados:
+            return Response(
+                {
+                    "error": "No puedes generar el movimiento: uno o más elementos ya tienen una BAJA o TRASLADO en estado 'pendiente' para este usuario.",
+                    "bloqueados": bloqueados,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        # --- 3. Determinar responsable ---
         if not responsables_nombres:
             nombre_responsable = ""
         else:
@@ -250,14 +404,10 @@ def solicitud_baja(request):
                 )
             nombre_responsable = list(responsables_nombres)[0]
 
-        # --- 4. Cargar la plantilla de Excel ---
+        # --- 4. Cargar plantilla ---
         template_path = os.path.join(
-            settings.BASE_DIR,
-            "static",
-            "plantillas",
-            "formato-dada-de-baja.xlsx",
+            settings.BASE_DIR, "static", "plantillas", "formato-dada-de-baja.xlsx"
         )
-
         if not os.path.exists(template_path):
             return Response(
                 {"error": f"No se encontró la plantilla en: {template_path}"},
@@ -270,16 +420,14 @@ def solicitud_baja(request):
         except KeyError:
             ws = wb.active
 
-        # --- 5. Rellenar cabecera ---
+        # --- 5. Cabecera ---
         hoy = date.today()
-        ws["B4"] = hoy.strftime("%d/%m/%Y")  # Fecha actual
-        ws["C6"] = nombre_responsable        # Campo "De:"
+        ws["B4"] = hoy.strftime("%d/%m/%Y")
+        ws["C6"] = nombre_responsable
 
-        # --- 6. Rellenar tablas de mayores y menores ---
-        fila_mayores = 9    # MAYORES inicia en 9
-        fila_menores = 20   # ✅ TU plantilla: MENORES inicia en 20 (no 25)
-
-        filas_usadas = []   # para ajustar alturas luego (opcional)
+        # --- 6. Tablas ---
+        fila_mayores = 9
+        fila_menores = 20
 
         for inv in inventarios_unicos:
             data = campos_por_inv[inv]
@@ -287,31 +435,23 @@ def solicitud_baja(request):
             categoria = data.get("categoria_id", 0)
             motivo = motivos_por_inv.get(inv, "") or ""
 
-            if categoria == 2:  # MAYORES
+            if categoria == 2:
                 fila = fila_mayores
                 fila_mayores += 1
-            else:               # MENORES (categoria 1 u otras)
+            else:
                 fila = fila_menores
                 fila_menores += 1
 
-            # Escribir valores
             ws[f"A{fila}"] = inv
-            ws[f"B{fila}"] = desc   # B:C está mergeado en el template
+            ws[f"B{fila}"] = desc
             ws[f"D{fila}"] = motivo
 
-            # Wrap + top
             for col in ("B", "D"):
                 ws[f"{col}{fila}"].alignment = Alignment(wrap_text=True, vertical="top")
 
-            # ✅ Ajuste de altura de la fila según contenido (sin tocar anchos)
             autofit_row_height(ws, fila, cols=("B", "D"))
 
-            filas_usadas.append(fila)
-
-        # ❌ IMPORTANTE: ya NO ajustamos anchos de columnas para evitar estirar eje X
-        # (Elimina el bloque que calculaba ws.column_dimensions[col].width)
-
-        # --- 7. Guardar en memoria y en servidor ---
+        # --- 7. Guardar ---
         output = io.BytesIO()
         wb.save(output)
         output.seek(0)
@@ -327,12 +467,11 @@ def solicitud_baja(request):
             with open(file_path, "wb") as f:
                 f.write(output.getvalue())
 
-        # --- 8. Registrar trazabilidad ---
+        # --- 8. Trazabilidad ---
         now_ts = timezone.now()
         with connection.cursor() as cursor:
             for inv in inventarios_unicos:
-                data = campos_por_inv[inv]
-                inventario_pk = data["id"]
+                inventario_pk = campos_por_inv[inv]["id"]
                 motivo = motivos_por_inv[inv]
 
                 meta_dict = {
@@ -353,13 +492,13 @@ def solicitud_baja(request):
                         now_ts,
                         "baja",
                         motivo,
-                        request.user_id,
-                        json.dumps(meta_dict),
-                        "pendiente",   # ✅ NUEVO
+                        user_id,
+                        json.dumps(meta_dict, ensure_ascii=False),
+                        "pendiente",
                     ],
                 )
 
-        # --- 9. Responder al cliente con el archivo ---
+        # --- 9. Respuesta ---
         response = HttpResponse(
             output.getvalue(),
             content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -374,53 +513,38 @@ def solicitud_baja(request):
         )
 
 
-def _formatear_fecha_ddmmaaaa(fecha: date) -> str:
-    """
-    Devuelve la fecha con el formato:
-    'D: 20   M: 08    A: 2025'
-    """
-    return f"D: {fecha.day:02d}   M: {fecha.month:02d}    A:  {fecha.year}"
-
-
-def _set_merged_safe(ws, coord: str, value, alignment: Alignment | None = None):
-    """
-    Escribe en 'coord'. Si esa celda está dentro de un rango combinado,
-    realmente escribe en la esquina superior izquierda de ese rango.
-    Así evitamos el error de MergedCell read-only.
-    """
-    target_coord = coord
-    for rng in ws.merged_cells.ranges:
-        if coord in rng:
-            target_coord = rng.coord.split(":")[0]  # esquina superior izquierda
-            break
-
-    cell = ws[target_coord]
-    cell.value = value
-    if alignment is not None:
-        cell.alignment = alignment
 
 @api_view(["POST"])
 @login_required_api
 def solicitud_prestamo(request):
     """
     Genera el formato de préstamo en Excel y registra la trazabilidad.
+
+    BLOQUEOS:
+    - Si el item ya tiene BAJA/TRASLADO PENDIENTE para este mismo usuario -> 409
+    - Si el item ya tiene PRÉSTAMO PENDIENTE y HOY <= fecha_devolucion -> 409 (por elemento)
+    - Si fecha_devolucion < hoy -> 400
     """
     try:
         data = request.data
 
+        # ✅ Usuario autenticado (FIX: ya no queda NULL en trazabilidad)
+        user_id = getattr(request, "user_id", None) or getattr(getattr(request, "user", None), "id", None)
+        if not user_id:
+            return Response(
+                {"error": "No se pudo identificar al usuario autenticado."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
         # -------- 1. Validar campos generales --------
         fecha_devolucion_str = (data.get("fecha_devolucion") or "").strip()
         solicitante_nombre = (
-            data.get("solicitante_nombre")
-            or data.get("nombre_solicitante")
-            or ""
+            data.get("solicitante_nombre") or data.get("nombre_solicitante") or ""
         ).strip()
         unidad_entidad = (data.get("unidad_entidad") or "").strip()
         nombre_proyecto = (data.get("nombre_proyecto") or "").strip()
         justificacion_prestamo = (
-            data.get("justificacion_prestamo")
-            or data.get("justificacion")
-            or ""
+            data.get("justificacion_prestamo") or data.get("justificacion") or ""
         ).strip()
         items = data.get("items")
 
@@ -431,12 +555,22 @@ def solicitud_prestamo(request):
             )
 
         try:
-            fecha_devolucion = datetime.datetime.strptime(
-                fecha_devolucion_str, "%Y-%m-%d"
-            ).date()
+            fecha_devolucion = datetime.datetime.strptime(fecha_devolucion_str, "%Y-%m-%d").date()
         except ValueError:
             return Response(
                 {"error": "Formato de 'fecha_devolucion' inválido. Usa YYYY-MM-DD."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # ✅ Nuevo: fecha_devolucion no puede estar en el pasado
+        hoy = date.today()
+        if fecha_devolucion < hoy:
+            return Response(
+                {
+                    "error": "No puedes generar un préstamo con fecha_devolucion en el pasado.",
+                    "fecha_devolucion": fecha_devolucion_str,
+                    "hoy": hoy.isoformat(),
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -446,15 +580,9 @@ def solicitud_prestamo(request):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         if not unidad_entidad:
-            return Response(
-                {"error": "El campo 'unidad_entidad' es obligatorio."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"error": "El campo 'unidad_entidad' es obligatorio."}, status=status.HTTP_400_BAD_REQUEST)
         if not nombre_proyecto:
-            return Response(
-                {"error": "El campo 'nombre_proyecto' es obligatorio."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"error": "El campo 'nombre_proyecto' es obligatorio."}, status=status.HTTP_400_BAD_REQUEST)
         if not justificacion_prestamo:
             return Response(
                 {"error": "El campo 'justificacion_prestamo' (o 'justificacion') es obligatorio."},
@@ -545,6 +673,36 @@ def solicitud_prestamo(request):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        item_ids = [campos_por_inv[inv]["id"] for inv in inventarios_unicos]
+
+        # ✅ BLOQUEO 1: BAJA/TRASLADO pendiente para este mismo usuario
+        bloqueados_bt = _validar_no_movido_pendiente_por_usuario(user_id, item_ids)
+        if bloqueados_bt:
+            return Response(
+                {
+                    "error": (
+                        "No puedes generar el préstamo: uno o más elementos ya tienen una "
+                        "BAJA o TRASLADO en estado 'pendiente' para este usuario."
+                    ),
+                    "bloqueados": bloqueados_bt,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        # ✅ BLOQUEO 2: PRÉSTAMO activo (pendiente) por elemento y no ha llegado fecha_devolucion
+        bloqueados_prestamo = _validar_prestamo_activo_por_elemento(item_ids)
+        if bloqueados_prestamo:
+            return Response(
+                {
+                    "error": (
+                        "No puedes generar el préstamo: uno o más elementos ya tienen un "
+                        "PRÉSTAMO pendiente y la fecha de devolución aún no se cumple."
+                    ),
+                    "bloqueados": bloqueados_prestamo,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
         # -------- 4. Determinar responsable --------
         if not responsables_nombres:
             nombre_responsable = ""
@@ -584,7 +742,6 @@ def solicitud_prestamo(request):
         wrap_top = Alignment(wrap_text=True, vertical="top")
 
         # -------- 6. Cabecera --------
-        hoy = date.today()
         _set_merged_safe(ws, "D6", _formatear_fecha_ddmmaaaa(hoy))
         _set_merged_safe(ws, "D7", _formatear_fecha_ddmmaaaa(fecha_devolucion))
 
@@ -597,19 +754,15 @@ def solicitud_prestamo(request):
         _set_merged_safe(ws, "D16", nombre_proyecto, wrap_top)
         _set_merged_safe(ws, "D17", justificacion_prestamo, wrap_top)
 
-        # ✅ Ajusta altura cabecera de forma “como BAJA” (sin multiplicar por altura del template)
         autofit_row_height_fixed(ws, 16, cols=("D",), base_height=15, max_height=120)
         autofit_row_height_fixed(ws, 17, cols=("D",), base_height=15, max_height=180)
 
         # -------- 7. Tabla elementos a prestar --------
-        # En tu plantilla: filas 22–25 son las del detalle.
         fila_actual = 22
         fila_max = 25
 
-        # ✅ MUY IMPORTANTE:
-        # Row 22 en el template viene MUY alta (ej: 109.5). La reseteamos antes de calcular.
         for r in range(fila_actual, fila_max + 1):
-            ws.row_dimensions[r].height = 15  # base fija y controlada
+            ws.row_dimensions[r].height = 15
 
         for inv in inventarios_unicos:
             if fila_actual > fila_max:
@@ -620,21 +773,11 @@ def solicitud_prestamo(request):
             marca = data_inv["marca"]
             valor = data_inv["valor"]
 
-            # No. Inventario
             ws[f"A{fila_actual}"] = inv
-
-            # Descripción (B–E merged)
             _set_merged_safe(ws, f"B{fila_actual}", desc, wrap_top)
-
-            # Marca (F–G merged)
             _set_merged_safe(ws, f"F{fila_actual}", marca, wrap_top)
-
-            # Valor compra (H–I merged)
             _set_merged_safe(ws, f"H{fila_actual}", valor)
 
-            # ✅ Auto-altura realista por Descripción + Marca (no toca anchos)
-            # - base_height 15: evita la fila gigante
-            # - width_factor 0.90: evita subestimar líneas (caso “nombre largo no sube”)
             autofit_row_height_fixed(
                 ws,
                 fila_actual,
@@ -643,14 +786,13 @@ def solicitud_prestamo(request):
                 width_factor=0.90,
                 max_height=140,
             )
-
             fila_actual += 1
 
-        # -------- 8. Firmas sección 5 --------
+        # -------- 8. Firmas --------
         _set_merged_safe(ws, "D28", nombre_responsable)
         _set_merged_safe(ws, "F28", solicitante_nombre)
 
-        # -------- 9. Guardar en memoria y servidor --------
+        # -------- 9. Guardar en memoria y en servidor --------
         output = io.BytesIO()
         wb.save(output)
         output.seek(0)
@@ -666,11 +808,10 @@ def solicitud_prestamo(request):
             with open(saved_path, "wb") as f:
                 f.write(output.getvalue())
 
-        # -------- 10. Trazabilidad --------
-        user_id = getattr(getattr(request, "user", None), "id", None)
+        # -------- 10. Trazabilidad (FIX usuario_id + estado pendiente) --------
         ahora = timezone.now()
-
         trazas = []
+
         for inv in inventarios_unicos:
             data_inv = campos_por_inv[inv]
             inventario_pk = data_inv["id"]
@@ -691,7 +832,7 @@ def solicitud_prestamo(request):
                 "unidad_entidad": unidad_entidad,
                 "proyecto": nombre_proyecto,
                 "justificacion_prestamo": justificacion_prestamo,
-                "fecha_devolucion": fecha_devolucion_str,
+                "fecha_devolucion": fecha_devolucion_str,  # ✅ clave para bloqueo futuro
                 "motivo_item": motivo_item,
                 "archivo_generado": filename,
                 "ruta_archivo": saved_path,
@@ -703,9 +844,9 @@ def solicitud_prestamo(request):
                     ahora,
                     "Prestamo",
                     detalle,
-                    user_id,
+                    user_id,  # ✅ FIX: ya no NULL
                     json.dumps(meta, ensure_ascii=False),
-                    "pendiente",  # ✅ NUEVO
+                    "pendiente",
                 )
             )
 
@@ -719,7 +860,6 @@ def solicitud_prestamo(request):
                     """,
                     trazas,
                 )
-
 
         # -------- 11. Respuesta --------
         response = HttpResponse(
@@ -739,56 +879,35 @@ def solicitud_prestamo(request):
 @login_required_api
 def solicitud_traslado(request):
     """
-    Genera el formato de TRASLADO en Excel y registra la trazabilidad.
-
-    Body esperado:
-    {
-        "destinatario_nombre": "Nombre del destinatario",
-        "items": [
-            { "inventario": "166718", "motivo": "Traslado a laboratorio X" },
-            { "inventario": "164553", "motivo": "Reubicación en oficina Y" }
-        ]
-    }
+    Genera el formato de TRASLADO en Excel.
+    Bloquea si el item ya tiene BAJA/TRASLADO en estado PENDIENTE para el mismo usuario.
+    Registra trazabilidad con estado = 'pendiente'.
     """
     try:
         data = request.data
 
-        # -------- 1. Datos generales del POST --------
-        destinatario_nombre = (
-            data.get("destinatario_nombre")
-            or data.get("nombre_destinatario")
-            or ""
-        ).strip()
+        # ✅ Usuario autenticado
+        user_id = getattr(request, "user_id", None) or getattr(getattr(request, "user", None), "id", None)
+        if not user_id:
+            return Response({"error": "No se pudo identificar al usuario autenticado."}, status=status.HTTP_401_UNAUTHORIZED)
 
+        destinatario_nombre = (data.get("destinatario_nombre") or data.get("nombre_destinatario") or "").strip()
         items = data.get("items")
 
         if not destinatario_nombre:
-            return Response(
-                {"error": "El campo 'destinatario_nombre' es obligatorio."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"error": "El campo 'destinatario_nombre' es obligatorio."}, status=status.HTTP_400_BAD_REQUEST)
 
         if not items or not isinstance(items, list):
-            return Response(
-                {"error": "Debes enviar una lista 'items' con al menos un elemento."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"error": "Debes enviar una lista 'items' con al menos un elemento."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # -------- 2. Validar items y preparar estructuras --------
         inventarios = []
         motivos_por_inv = {}
-
         for idx, it in enumerate(items):
             inv = (it.get("inventario") or "").strip()
             mot = (it.get("motivo") or "").strip()
             if not inv or not mot:
                 return Response(
-                    {
-                        "error": (
-                            "Cada item debe tener 'inventario' y 'motivo'. "
-                            f"Error en posición {idx}."
-                        )
-                    },
+                    {"error": f"Cada item debe tener 'inventario' y 'motivo'. Error en posición {idx}."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             inventarios.append(inv)
@@ -796,23 +915,16 @@ def solicitud_traslado(request):
 
         inventarios_unicos = list(dict.fromkeys(inventarios))
 
-        # -------- 3. Obtener datos del usuario actual y destinatario --------
-        user_id = getattr(request, "user_id", None) or getattr(
-            getattr(request, "user", None), "id", None
-        )
-
+        # --- 3. Usuario actual (nombre) y destinatario ---
         nombre_usuario = ""
         destinatario_id = None
 
         with connection.cursor() as cursor:
-            # Usuario actual (responsable / "De:")
-            if user_id:
-                cursor.execute("SELECT nombre FROM usuarios WHERE id = %s", [user_id])
-                row = cursor.fetchone()
-                if row:
-                    nombre_usuario = row[0] or ""
+            cursor.execute("SELECT nombre FROM usuarios WHERE id = %s", [user_id])
+            row = cursor.fetchone()
+            if row:
+                nombre_usuario = row[0] or ""
 
-            # Destinatario por nombre (igual que tú)
             cursor.execute(
                 """
                 SELECT id, nombre
@@ -825,22 +937,13 @@ def solicitud_traslado(request):
 
         if not dest_rows:
             return Response(
-                {
-                    "error": "El destinatario indicado no existe en la tabla 'usuarios'.",
-                    "destinatario": destinatario_nombre,
-                },
+                {"error": "El destinatario indicado no existe en la tabla 'usuarios'.", "destinatario": destinatario_nombre},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         if len(dest_rows) > 1:
             return Response(
-                {
-                    "error": (
-                        "Hay más de un usuario con ese nombre. "
-                        "Por favor especifica un identificador único."
-                    ),
-                    "coincidencias": [r[1] for r in dest_rows],
-                },
+                {"error": "Hay más de un usuario con ese nombre. Por favor especifica un identificador único.", "coincidencias": [r[1] for r in dest_rows]},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -850,7 +953,7 @@ def solicitud_traslado(request):
         if not nombre_usuario:
             nombre_usuario = "USUARIO ACTUAL"
 
-        # -------- 4. Consultar inventario_items --------
+        # --- 4. inventario_items ---
         with connection.cursor() as cursor:
             cursor.execute(
                 """
@@ -867,10 +970,7 @@ def solicitud_traslado(request):
             rows = cursor.fetchall()
 
         if not rows:
-            return Response(
-                {"error": "No se encontró ningún elemento con esos números de inventario."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+            return Response({"error": "No se encontró ningún elemento con esos números de inventario."}, status=status.HTTP_404_NOT_FOUND)
 
         campos_por_inv = {}
         for (item_id, inventario, descripcion, categoria_id) in rows:
@@ -884,26 +984,26 @@ def solicitud_traslado(request):
         no_encontrados = [inv for inv in inventarios_unicos if inv not in campos_por_inv]
         if no_encontrados:
             return Response(
-                {
-                    "error": "Algunos inventarios no existen en la base de datos.",
-                    "inventarios_no_encontrados": no_encontrados,
-                },
+                {"error": "Algunos inventarios no existen en la base de datos.", "inventarios_no_encontrados": no_encontrados},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # -------- 5. Cargar plantilla de TRASLADO --------
-        template_path = os.path.join(
-            settings.BASE_DIR,
-            "static",
-            "plantillas",
-            "formato-traslado.xlsx",
-        )
-
-        if not os.path.exists(template_path):
+        # ✅ BLOQUEO por PENDIENTE (baja/traslado) para el mismo usuario
+        item_ids = [campos_por_inv[inv]["id"] for inv in inventarios_unicos]
+        bloqueados = _validar_no_movido_pendiente_por_usuario(user_id, item_ids)
+        if bloqueados:
             return Response(
-                {"error": f"No se encontró la plantilla en: {template_path}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                {
+                    "error": "No puedes generar el movimiento: uno o más elementos ya tienen una BAJA o TRASLADO en estado 'pendiente' para este usuario.",
+                    "bloqueados": bloqueados,
+                },
+                status=status.HTTP_409_CONFLICT,
             )
+
+        # --- 5. Cargar plantilla ---
+        template_path = os.path.join(settings.BASE_DIR, "static", "plantillas", "formato-traslado.xlsx")
+        if not os.path.exists(template_path):
+            return Response({"error": f"No se encontró la plantilla en: {template_path}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         wb = load_workbook(template_path)
         try:
@@ -915,40 +1015,30 @@ def solicitud_traslado(request):
         fecha_str = hoy.strftime("%d/%m/%Y")
         wrap_top = Alignment(wrap_text=True, vertical="top")
 
-        # -------- 6. Cabecera --------
-        _set_merged_safe(ws, "B5", "Escuela de sistemas")          # U.A.A (B5:C5)
-        ws["D5"] = f"Fecha: {fecha_str}"                          # Fecha
-        _set_merged_safe(ws, "B7", nombre_usuario)                 # De:
-        _set_merged_safe(ws, "B38", f"Nombre: {nombre_usuario}")   # Firma entrega
-        _set_merged_safe(ws, "C38", f"Nombre: {destinatario_nombre}")  # Firma recibe
+        # --- 6. Cabecera ---
+        _set_merged_safe(ws, "B5", "Escuela de sistemas")
+        ws["D5"] = f"Fecha: {fecha_str}"
+        _set_merged_safe(ws, "B7", nombre_usuario)
+        _set_merged_safe(ws, "B38", f"Nombre: {nombre_usuario}")
+        _set_merged_safe(ws, "C38", f"Nombre: {destinatario_nombre}")
 
-        # -------- 7. Tablas según categoría --------
-        # En tu plantilla (según imagen):
-        # - MAYORES:   encabezado fila 9, datos 10–18
-        # - MENORES:   encabezado fila 20, datos 21–26
-        # - INTANGIBLES: encabezado fila 28, datos 29–34 (en tu imagen se ve hasta 34)
+        # --- 7. Tablas ---
         fila_mayores = 10
         fila_menores = 21
-        fila_intang  = 29
+        fila_intang = 29
 
-        consec_mayores = 1
         consec_menores = 1
-        consec_intang  = 1
+        consec_intang = 1
 
-        # ✅ IMPORTANTÍSIMO: limpia cualquier cosa en E/F/G dentro del rango de tablas
-        # para que no vuelva a aparecer texto fuera de la tabla.
         for r in range(10, 35):
             for c in ("E", "F", "G", "H"):
                 ws[f"{c}{r}"].value = None
-
-        # ✅ También reseteamos alturas base de las filas de tablas a 15
-        for r in range(10, 35):
             ws.row_dimensions[r].height = 15
 
         for inv in inventarios_unicos:
-            data = campos_por_inv[inv]
-            desc = data["descripcion"]
-            categoria = data["categoria_id"]
+            data_item = campos_por_inv[inv]
+            desc = data_item["descripcion"]
+            categoria = data_item["categoria_id"]
             motivo = motivos_por_inv[inv]
 
             texto_elemento = f"{inv} - {desc}"
@@ -956,67 +1046,42 @@ def solicitud_traslado(request):
             if categoria == 2:  # MAYORES
                 if fila_mayores > 18:
                     continue
-
                 fila = fila_mayores
                 ws[f"A{fila}"] = inv
-                # ELEMENTO (B:C merged)
                 _set_merged_safe(ws, f"B{fila}", texto_elemento, wrap_top)
-
-                # ✅ MOTIVO DE TRASLADO (D) -> no E
                 ws[f"D{fila}"] = motivo
                 ws[f"D{fila}"].alignment = wrap_top
 
-                # ✅ Auto-altura por ELEMENTO + MOTIVO (como baja)
-                autofit_row_height_fixed(
-                    ws, fila, cols=("B", "D"),
-                    base_height=15, width_factor=0.90, max_height=140
-                )
-
+                autofit_row_height_fixed(ws, fila, cols=("B", "D"), base_height=15, width_factor=0.90, max_height=140)
                 fila_mayores += 1
+
             elif categoria == 1:  # MENORES
                 if fila_menores > 26:
                     continue
-
                 fila = fila_menores
                 ws[f"A{fila}"] = consec_menores
-
                 _set_merged_safe(ws, f"B{fila}", texto_elemento, wrap_top)
-
                 ws[f"D{fila}"] = motivo
                 ws[f"D{fila}"].alignment = wrap_top
 
-                autofit_row_height_fixed(
-                    ws, fila, cols=("B", "D"),
-                    base_height=15, width_factor=0.90, max_height=140
-                )
-
+                autofit_row_height_fixed(ws, fila, cols=("B", "D"), base_height=15, width_factor=0.90, max_height=140)
                 fila_menores += 1
                 consec_menores += 1
 
             elif categoria == 3:  # INTANGIBLES
-                if fila_intang > 34:   # en tu imagen hay espacio hasta 34
+                if fila_intang > 34:
                     continue
-
                 fila = fila_intang
                 ws[f"A{fila}"] = consec_intang
-
                 _set_merged_safe(ws, f"B{fila}", texto_elemento, wrap_top)
-
                 ws[f"D{fila}"] = motivo
                 ws[f"D{fila}"].alignment = wrap_top
 
-                autofit_row_height_fixed(
-                    ws, fila, cols=("B", "D"),
-                    base_height=15, width_factor=0.90, max_height=140
-                )
-
+                autofit_row_height_fixed(ws, fila, cols=("B", "D"), base_height=15, width_factor=0.90, max_height=140)
                 fila_intang += 1
                 consec_intang += 1
 
-            else:
-                continue
-
-        # -------- 8. Guardar Excel en memoria y en servidor --------
+        # --- 8. Guardar ---
         output = io.BytesIO()
         wb.save(output)
         output.seek(0)
@@ -1032,13 +1097,12 @@ def solicitud_traslado(request):
             with open(saved_path, "wb") as f:
                 f.write(output.getvalue())
 
-        # -------- 9. Registrar trazabilidad --------
+        # --- 9. Trazabilidad ---
         ahora = timezone.now()
         trazas = []
 
         for inv in inventarios_unicos:
-            data = campos_por_inv[inv]
-            inventario_pk = data["id"]
+            inventario_pk = campos_por_inv[inv]["id"]
             motivo = motivos_por_inv[inv]
 
             detalle = (
@@ -1067,7 +1131,7 @@ def solicitud_traslado(request):
                     detalle,
                     user_id,
                     json.dumps(meta, ensure_ascii=False),
-                    "pendiente",  # ✅ NUEVO
+                    "pendiente",
                 )
             )
 
@@ -1082,8 +1146,7 @@ def solicitud_traslado(request):
                     trazas,
                 )
 
-
-        # -------- 10. Responder con el archivo --------
+        # --- 10. Respuesta ---
         response = HttpResponse(
             output.getvalue(),
             content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1637,5 +1700,307 @@ def trazabilidad_por_elemento(request):
     except Exception as e:
         return Response(
             {"error": f"Error al consultar trazabilidad por elemento: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+@api_view(["POST"])
+@login_required_api
+def confirmar_o_cancelar_baja(request):
+    """
+    Confirma o cancela una solicitud de baja agrupada por ARCHIVO (guardado en meta).
+
+    Body JSON:
+    {
+      "archivo": "solicitud_baja_20260118_204256.xlsx",
+      "decision": "confirmar" | "cancelar"
+    }
+
+    - Busca todas las filas en inventario_trazabilidad donde:
+        accion = 'baja'
+        estado = 'pendiente'
+        meta->>'archivo' = archivo
+
+    - Si decision = confirmar:
+        - Cambia estado a 'completado'
+        - Actualiza inventario_items.recibido_por_id = 0 para esos items
+
+    - Si decision = cancelar:
+        - Elimina las trazas pendientes asociadas a ese archivo
+    """
+
+    try:
+        data = request.data or {}
+        archivo = (data.get("archivo") or "").strip()
+        decision = (data.get("decision") or "").strip().lower()
+
+        if not archivo:
+            return Response(
+                {"error": "El campo 'archivo' es obligatorio."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if decision not in ("confirmar", "cancelar"):
+            return Response(
+                {"error": "El campo 'decision' debe ser 'confirmar' o 'cancelar'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # --- 1) Traer trazas de BAJA pendientes por archivo (meta es JSONB) ---
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, inventario_id
+                FROM inventario_trazabilidad
+                WHERE accion = %s
+                  AND LOWER(estado) = %s
+                  AND COALESCE(meta->>'archivo','') = %s
+                ORDER BY fecha ASC, id ASC
+                """,
+                ["baja", "pendiente", archivo],
+            )
+            rows = cursor.fetchall()
+
+        if not rows:
+            return Response(
+                {
+                    "error": "No se encontraron trazas de baja pendientes para ese archivo.",
+                    "archivo": archivo,
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        traza_ids = [r[0] for r in rows]
+        item_ids = list({r[1] for r in rows if r[1] is not None})  # únicos
+        ahora = timezone.now()
+        user_id = getattr(request, "user_id", None) or getattr(getattr(request, "user", None), "id", None)
+
+        # --- 2) Ejecutar acción en transacción ---
+        with transaction.atomic():
+            with connection.cursor() as cursor:
+                if decision == "confirmar":
+                    # 2.1) Marcar trazas como completadas
+                    cursor.execute(
+                        """
+                        UPDATE inventario_trazabilidad
+                        SET estado = %s
+                        WHERE id = ANY(%s)
+                        """,
+                        ["completado", traza_ids],
+                    )
+
+                    # 2.2) Quitar propietario al item -> asignar 0 (NO NULL)
+                    if item_ids:
+                        cursor.execute(
+                            """
+                            UPDATE inventario_items
+                            SET recibido_por_id = %s
+                            WHERE id = ANY(%s)
+                            """,
+                            [0, item_ids],
+                        )
+
+                    return Response(
+                        {
+                            "mensaje": "Baja confirmada correctamente.",
+                            "archivo": archivo,
+                            "trazas_afectadas": len(traza_ids),
+                            "items_afectados": len(item_ids),
+                            "recibido_por_id_asignado": 0,
+                            "fecha": ahora.isoformat(),
+                            "usuario_id": user_id,
+                        },
+                        status=status.HTTP_200_OK,
+                    )
+
+                # decision == "cancelar"
+                cursor.execute(
+                    """
+                    DELETE FROM inventario_trazabilidad
+                    WHERE id = ANY(%s)
+                    """,
+                    [traza_ids],
+                )
+
+                return Response(
+                    {
+                        "mensaje": "Baja cancelada y trazabilidad eliminada correctamente.",
+                        "archivo": archivo,
+                        "trazas_eliminadas": len(traza_ids),
+                        "fecha": ahora.isoformat(),
+                        "usuario_id": user_id,
+                    },
+                    status=status.HTTP_200_OK,
+                )
+
+    except Exception as e:
+        return Response(
+            {"error": f"Error confirmando/cancelando baja: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+        @api_view(["POST"])
+@login_required_api
+def confirmar_cancelar_prestamo(request):
+    """
+    Confirma o cancela un PRÉSTAMO agrupado por el archivo (meta.archivo_generado).
+
+    Body:
+    {
+      "archivo": "solicitud_prestamo_20260122_120000.xlsx",
+      "accion": "confirmar" | "cancelar"
+    }
+
+    Reglas:
+    - Solo opera sobre filas:
+        usuario_id = request.user_id
+        accion = 'Prestamo' (case-insensitive)
+        estado = 'pendiente'
+        meta.archivo_generado (o meta.archivo) = archivo
+    - confirmar:
+        1) valida que todos los items pertenezcan al usuario (recibido_por_id = user_id)
+        2) pone estado = 'completado'
+        3) pone recibido_por_id = 0 en inventario_items
+    - cancelar:
+        borra esas filas de inventario_trazabilidad
+    """
+    try:
+        user_id = getattr(request, "user_id", None) or getattr(getattr(request, "user", None), "id", None)
+        if not user_id:
+            return Response(
+                {"error": "No se pudo identificar al usuario autenticado."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        data = request.data or {}
+        archivo = (data.get("archivo") or "").strip()
+        accion = (data.get("accion") or "").strip().lower()
+
+        if not archivo:
+            return Response(
+                {"error": "Debes enviar 'archivo' (nombre del archivo generado del préstamo)."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if accion not in ("confirmar", "cancelar"):
+            return Response(
+                {"error": "Debes enviar 'accion' con valor 'confirmar' o 'cancelar'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 1) Traer todas las trazas pendientes de préstamo asociadas a ese archivo
+        #    Soportamos meta->>'archivo_generado' o meta->>'archivo'
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    t.id,
+                    t.inventario_id,
+                    ii.inventario::text AS numero_inventario,
+                    COALESCE(ii.recibido_por_id, 0) AS recibido_por_id
+                FROM inventario_trazabilidad t
+                JOIN inventario_items ii ON ii.id = t.inventario_id
+                WHERE t.usuario_id = %s
+                  AND LOWER(COALESCE(t.estado,'')) = 'pendiente'
+                  AND LOWER(COALESCE(t.accion,'')) = 'prestamo'
+                  AND COALESCE(t.meta->>'archivo_generado', t.meta->>'archivo', '') = %s
+                ORDER BY t.fecha ASC, t.id ASC
+                """,
+                [user_id, archivo],
+            )
+            rows = cursor.fetchall()
+
+        if not rows:
+            return Response(
+                {
+                    "error": "No se encontraron préstamos pendientes para ese archivo (o ya fueron confirmados/cancelados).",
+                    "archivo": archivo,
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        traza_ids = [r[0] for r in rows]
+        inventario_ids = [r[1] for r in rows]
+        inventarios_nums = [r[2] for r in rows]
+
+        if accion == "cancelar":
+            with transaction.atomic():
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        DELETE FROM inventario_trazabilidad
+                        WHERE id = ANY(%s)
+                        """,
+                        [traza_ids],
+                    )
+
+            return Response(
+                {
+                    "ok": True,
+                    "accion": "cancelar",
+                    "archivo": archivo,
+                    "total_trazas_eliminadas": len(traza_ids),
+                    "inventarios": inventarios_nums,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        # accion == "confirmar"
+        # 2) Validar que todos los items todavía pertenezcan al usuario
+        not_owned = [
+            {"inventario": inv_num, "recibido_por_id_actual": rec_id}
+            for (_, _, inv_num, rec_id) in rows
+            if int(rec_id) != int(user_id)
+        ]
+        if not_owned:
+            return Response(
+                {
+                    "error": (
+                        "No se puede confirmar el préstamo porque uno o más elementos "
+                        "ya no pertenecen a este usuario (recibido_por_id != usuario actual)."
+                    ),
+                    "archivo": archivo,
+                    "no_pertenecen_al_usuario": not_owned,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        # 3) Confirmar: estado -> completado y recibido_por_id -> 0
+        now_ts = timezone.now()
+        with transaction.atomic():
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE inventario_trazabilidad
+                    SET estado = 'completado'
+                    WHERE id = ANY(%s)
+                    """,
+                    [traza_ids],
+                )
+
+                cursor.execute(
+                    """
+                    UPDATE inventario_items
+                    SET recibido_por_id = 0
+                    WHERE id = ANY(%s)
+                      AND recibido_por_id = %s
+                    """,
+                    [inventario_ids, user_id],
+                )
+
+        return Response(
+            {
+                "ok": True,
+                "accion": "confirmar",
+                "archivo": archivo,
+                "total_trazas_confirmadas": len(traza_ids),
+                "inventarios": inventarios_nums,
+                "fecha_confirmacion": now_ts.isoformat(),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    except Exception as e:
+        return Response(
+            {"error": f"Error al confirmar/cancelar préstamo: {str(e)}"},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
