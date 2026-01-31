@@ -1,3 +1,7 @@
 @use './layout/layout.scss';
 @use 'primeicons/primeicons.css';
 @use './tailwind.css';
+
+.select-school .p-select-label {
+  white-space: normal;
+}

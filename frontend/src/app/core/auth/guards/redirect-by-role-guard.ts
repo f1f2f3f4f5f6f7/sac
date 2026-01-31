@@ -1,8 +1,8 @@
 // core/auth/redirect-by-role.guard.ts
 import { inject } from '@angular/core';
 import { Router } from '@angular/router';
-import { AuthService } from './auth.service';
-import { RoleType } from '../models/role.enum';
+import { AuthService } from '../auth.service';
+import { RoleType } from '../../models/role.enum';
 
 export const redirectByRoleGuard = () => {
   const authService = inject(AuthService);

@@ -1,14 +1,14 @@
 import { Routes } from '@angular/router';
-import { authGuard } from './core/auth/auth-guard';
-import { hasRole } from './core/auth/has-role-guard';
-import { redirectByRoleGuard } from './core/auth/redirect-by-role-guard';
+import { hasRole } from './core/auth/guards/has-role-guard';
+import { redirectByRoleGuard } from './core/auth/guards/redirect-by-role-guard';
+import { authGuard } from './core/auth/guards/auth-guard';
 
 export const routes: Routes = [
-{
+  {
     path: '',
     pathMatch: 'full',
     canActivate: [redirectByRoleGuard],
-    children: []
+    children: [],
   },
   {
     path: 'login',
@@ -22,12 +22,16 @@ export const routes: Routes = [
       {
         path: '',
         loadComponent: () =>
-          import('./core/components/pages/manejoUsuarios/manejoUsuarios').then((m) => m.ManejoUsuariosComponent),
+          import('./core/components/pages/manejoUsuarios/manejoUsuarios').then(
+            (m) => m.ManejoUsuariosComponent,
+          ),
       },
       {
         path: 'configuracion',
         loadComponent: () =>
-          import('./core/components/pages/configuracionUsuario/configuracionUsuario').then((m) => m.ConfiguracionUsuarioComponent),
+          import('./core/components/pages/configuracionUsuario/configuracionUsuario').then(
+            (m) => m.ConfiguracionUsuarioComponent,
+          ),
       },
     ],
   },
@@ -56,14 +60,16 @@ export const routes: Routes = [
       {
         path: 'configuracion',
         loadComponent: () =>
-          import('./core/components/pages/configuracionUsuario/configuracionUsuario').then((m) => m.ConfiguracionUsuarioComponent),
+          import('./core/components/pages/configuracionUsuario/configuracionUsuario').then(
+            (m) => m.ConfiguracionUsuarioComponent,
+          ),
       },
       {
         path: 'tramites',
         canActivate: [authGuard],
         loadComponent: () =>
           import('./core/components/pages/tramites/tramites').then((m) => m.Tramites),
-      }
+      },
     ],
   },
 ];
