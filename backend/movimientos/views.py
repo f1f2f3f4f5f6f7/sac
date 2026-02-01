@@ -71,6 +71,101 @@ def _get_effective_width_chars(ws, coord: str) -> int:
         w = ws.sheet_format.defaultColWidth or 8.43
     return max(1, int(w))
 
+def _crear_notificacion(usuario_id: int, tipo: str, titulo: str, cuerpo: str, meta: dict | None = None):
+    meta = meta or {}
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO notificaciones (usuario_id, tipo, titulo, cuerpo, meta, leida)
+            VALUES (%s, %s, %s, %s, %s::jsonb, FALSE)
+            RETURNING id
+            """,
+            [usuario_id, tipo, titulo, cuerpo, json.dumps(meta, ensure_ascii=False)],
+        )
+        row = cursor.fetchone()
+        return row[0] if row else None
+
+
+def _crear_notificacion_traslado_pendiente(
+    destinatario_id: int,
+    emisor_id: int,
+    emisor_nombre: str,
+    destinatario_nombre: str,
+    archivo: str,
+    ruta_archivo: str | None,
+    inventarios: list[str],
+):
+    titulo = "Traslado pendiente por confirmar"
+    cuerpo = (
+        f"Tienes un traslado pendiente de {emisor_nombre}. "
+        f"Elementos: {len(inventarios)}. Archivo: {archivo}"
+    )
+
+    meta = {
+        "tipo": "traslado",
+        "estado": "pendiente",
+        "archivo_generado": archivo,
+        "ruta_archivo": ruta_archivo,
+        "emisor_id": int(emisor_id),
+        "emisor_nombre": emisor_nombre,
+        "destinatario_id": int(destinatario_id),
+        "destinatario_nombre": destinatario_nombre,
+        "inventarios": inventarios,
+    }
+    return _crear_notificacion(destinatario_id, "traslado_pendiente", titulo, cuerpo, meta)
+
+def _resolve_generated_file_path(ruta_archivo: str | None, archivo: str | None, subdir: str) -> str | None:
+    """
+    Devuelve una ruta absoluta al archivo generado:
+    - Prioriza 'ruta_archivo' (si existe).
+    - Si no hay 'ruta_archivo', intenta construirla con MEDIA_ROOT/subdir/archivo.
+    """
+    ruta_archivo = (ruta_archivo or "").strip()
+    archivo = (archivo or "").strip()
+
+    if ruta_archivo:
+        # Si ya viene absoluta, perfecto. Si viene relativa, la normalizamos con MEDIA_ROOT.
+        if os.path.isabs(ruta_archivo):
+            return ruta_archivo
+        media_root = getattr(settings, "MEDIA_ROOT", None)
+        if media_root:
+            return os.path.join(media_root, ruta_archivo)
+        return ruta_archivo  # último recurso
+
+    media_root = getattr(settings, "MEDIA_ROOT", None)
+    if media_root and archivo:
+        return os.path.join(media_root, subdir, archivo)
+
+    return None
+
+
+def _safe_delete_generated_file(file_path: str | None) -> dict:
+    """
+    Borra el archivo si existe y si está dentro de MEDIA_ROOT (seguridad).
+    Retorna dict con resultado para log / respuesta.
+    """
+    if not file_path:
+        return {"deleted": False, "reason": "no_file_path"}
+
+    media_root = getattr(settings, "MEDIA_ROOT", None)
+    try:
+        real_path = os.path.realpath(file_path)
+
+        # Seguridad: solo borrar dentro de MEDIA_ROOT si está definido
+        if media_root:
+            real_media = os.path.realpath(media_root)
+            if not (real_path == real_media or real_path.startswith(real_media + os.sep)):
+                return {"deleted": False, "reason": "outside_media_root", "path": real_path}
+
+        if not os.path.exists(real_path):
+            return {"deleted": False, "reason": "not_found", "path": real_path}
+
+        os.remove(real_path)
+        return {"deleted": True, "path": real_path}
+
+    except Exception as e:
+        return {"deleted": False, "reason": "exception", "error": str(e), "path": file_path}
+
 
 def _count_wrapped_lines(value: str, width_chars: int) -> int:
     """
@@ -880,8 +975,10 @@ def solicitud_prestamo(request):
 def solicitud_traslado(request):
     """
     Genera el formato de TRASLADO en Excel.
-    Bloquea si el item ya tiene BAJA/TRASLADO en estado PENDIENTE para el mismo usuario.
-    Registra trazabilidad con estado = 'pendiente'.
+
+    - Inserta trazabilidad PENDIENTE (accion='traslado', estado='pendiente') para el EMISOR (usuario_id=user_id)
+    - Crea notificación 'traslado_pendiente' para el DESTINATARIO (tabla notificaciones)
+    - La confirmación del destinatario moverá recibido_por_id al destinatario
     """
     try:
         data = request.data
@@ -889,17 +986,27 @@ def solicitud_traslado(request):
         # ✅ Usuario autenticado
         user_id = getattr(request, "user_id", None) or getattr(getattr(request, "user", None), "id", None)
         if not user_id:
-            return Response({"error": "No se pudo identificar al usuario autenticado."}, status=status.HTTP_401_UNAUTHORIZED)
+            return Response(
+                {"error": "No se pudo identificar al usuario autenticado."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
 
         destinatario_nombre = (data.get("destinatario_nombre") or data.get("nombre_destinatario") or "").strip()
         items = data.get("items")
 
         if not destinatario_nombre:
-            return Response({"error": "El campo 'destinatario_nombre' es obligatorio."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "El campo 'destinatario_nombre' es obligatorio."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         if not items or not isinstance(items, list):
-            return Response({"error": "Debes enviar una lista 'items' con al menos un elemento."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "Debes enviar una lista 'items' con al menos un elemento."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
+        # --- 1. Validar items y preparar estructuras ---
         inventarios = []
         motivos_por_inv = {}
         for idx, it in enumerate(items):
@@ -915,7 +1022,7 @@ def solicitud_traslado(request):
 
         inventarios_unicos = list(dict.fromkeys(inventarios))
 
-        # --- 3. Usuario actual (nombre) y destinatario ---
+        # --- 2. Usuario actual (nombre) y destinatario ---
         nombre_usuario = ""
         destinatario_id = None
 
@@ -950,10 +1057,16 @@ def solicitud_traslado(request):
         destinatario_id, destinatario_nombre_db = dest_rows[0]
         destinatario_nombre = destinatario_nombre_db
 
+        if int(destinatario_id) == int(user_id):
+            return Response(
+                {"error": "No puedes trasladar elementos a tu mismo usuario."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         if not nombre_usuario:
             nombre_usuario = "USUARIO ACTUAL"
 
-        # --- 4. inventario_items ---
+        # --- 3. inventario_items (incluye recibido_por_id para validar propiedad) ---
         with connection.cursor() as cursor:
             cursor.execute(
                 """
@@ -961,7 +1074,8 @@ def solicitud_traslado(request):
                     ii.id,
                     ii.inventario,
                     ii.descripcion,
-                    ii.categoria_id
+                    ii.categoria_id,
+                    COALESCE(ii.recibido_por_id, 0) AS recibido_por_id
                 FROM inventario_items ii
                 WHERE ii.inventario = ANY(%s)
                 """,
@@ -970,15 +1084,19 @@ def solicitud_traslado(request):
             rows = cursor.fetchall()
 
         if not rows:
-            return Response({"error": "No se encontró ningún elemento con esos números de inventario."}, status=status.HTTP_404_NOT_FOUND)
+            return Response(
+                {"error": "No se encontró ningún elemento con esos números de inventario."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
         campos_por_inv = {}
-        for (item_id, inventario, descripcion, categoria_id) in rows:
+        for (item_id, inventario, descripcion, categoria_id, recibido_por_id) in rows:
             campos_por_inv[str(inventario)] = {
                 "id": item_id,
                 "inventario": inventario,
                 "descripcion": descripcion or "",
                 "categoria_id": categoria_id,
+                "recibido_por_id": int(recibido_por_id or 0),
             }
 
         no_encontrados = [inv for inv in inventarios_unicos if inv not in campos_por_inv]
@@ -986,6 +1104,22 @@ def solicitud_traslado(request):
             return Response(
                 {"error": "Algunos inventarios no existen en la base de datos.", "inventarios_no_encontrados": no_encontrados},
                 status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # ✅ Validar que todos pertenezcan al emisor
+        no_son_del_emisor = []
+        for inv in inventarios_unicos:
+            if int(campos_por_inv[inv]["recibido_por_id"]) != int(user_id):
+                no_son_del_emisor.append(
+                    {"inventario": inv, "recibido_por_id_actual": campos_por_inv[inv]["recibido_por_id"]}
+                )
+        if no_son_del_emisor:
+            return Response(
+                {
+                    "error": "No puedes trasladar elementos que no te pertenecen (recibido_por_id != tu usuario).",
+                    "no_son_del_emisor": no_son_del_emisor,
+                },
+                status=status.HTTP_409_CONFLICT,
             )
 
         # ✅ BLOQUEO por PENDIENTE (baja/traslado) para el mismo usuario
@@ -1000,10 +1134,13 @@ def solicitud_traslado(request):
                 status=status.HTTP_409_CONFLICT,
             )
 
-        # --- 5. Cargar plantilla ---
+        # --- 4. Cargar plantilla ---
         template_path = os.path.join(settings.BASE_DIR, "static", "plantillas", "formato-traslado.xlsx")
         if not os.path.exists(template_path):
-            return Response({"error": f"No se encontró la plantilla en: {template_path}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response(
+                {"error": f"No se encontró la plantilla en: {template_path}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
         wb = load_workbook(template_path)
         try:
@@ -1015,14 +1152,14 @@ def solicitud_traslado(request):
         fecha_str = hoy.strftime("%d/%m/%Y")
         wrap_top = Alignment(wrap_text=True, vertical="top")
 
-        # --- 6. Cabecera ---
+        # --- 5. Cabecera ---
         _set_merged_safe(ws, "B5", "Escuela de sistemas")
         ws["D5"] = f"Fecha: {fecha_str}"
         _set_merged_safe(ws, "B7", nombre_usuario)
         _set_merged_safe(ws, "B38", f"Nombre: {nombre_usuario}")
         _set_merged_safe(ws, "C38", f"Nombre: {destinatario_nombre}")
 
-        # --- 7. Tablas ---
+        # --- 6. Tablas ---
         fila_mayores = 10
         fila_menores = 21
         fila_intang = 29
@@ -1081,7 +1218,7 @@ def solicitud_traslado(request):
                 fila_intang += 1
                 consec_intang += 1
 
-        # --- 8. Guardar ---
+        # --- 7. Guardar ---
         output = io.BytesIO()
         wb.save(output)
         output.seek(0)
@@ -1097,56 +1234,61 @@ def solicitud_traslado(request):
             with open(saved_path, "wb") as f:
                 f.write(output.getvalue())
 
-        # --- 9. Trazabilidad ---
+        # --- 8. Trazabilidad + Notificación (en transacción) ---
         ahora = timezone.now()
-        trazas = []
 
-        for inv in inventarios_unicos:
-            inventario_pk = campos_por_inv[inv]["id"]
-            motivo = motivos_por_inv[inv]
+        with transaction.atomic():
+            trazas = []
+            for inv in inventarios_unicos:
+                inventario_pk = campos_por_inv[inv]["id"]
+                motivo = motivos_por_inv[inv]
 
-            detalle = (
-                f"Traslado de elemento inventario {inv}. "
-                f"De: {nombre_usuario}. "
-                f"Para: {destinatario_nombre}. "
-                f"Motivo: {motivo}"
-            )
-
-            meta = {
-                "tipo": "traslado",
-                "inventario": inv,
-                "de": nombre_usuario,
-                "destinatario_id": destinatario_id,
-                "destinatario_nombre": destinatario_nombre,
-                "motivo": motivo,
-                "archivo_generado": filename,
-                "ruta_archivo": saved_path,
-            }
-
-            trazas.append(
-                (
-                    inventario_pk,
-                    ahora,
-                    "traslado",
-                    detalle,
-                    user_id,
-                    json.dumps(meta, ensure_ascii=False),
-                    "pendiente",
-                )
-            )
-
-        if trazas:
-            with connection.cursor() as cursor:
-                cursor.executemany(
-                    """
-                    INSERT INTO inventario_trazabilidad
-                        (inventario_id, fecha, accion, detalle, usuario_id, meta, estado)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    """,
-                    trazas,
+                detalle = (
+                    f"Traslado de elemento inventario {inv}. "
+                    f"De: {nombre_usuario}. "
+                    f"Para: {destinatario_nombre}. "
+                    f"Motivo: {motivo}"
                 )
 
-        # --- 10. Respuesta ---
+                meta = {
+                    "tipo": "traslado",
+                    "inventario": inv,
+                    "emisor_id": int(user_id),
+                    "emisor_nombre": nombre_usuario,
+                    "destinatario_id": int(destinatario_id),
+                    "destinatario_nombre": destinatario_nombre,
+                    "motivo": motivo,
+                    "archivo_generado": filename,
+                    "ruta_archivo": saved_path,
+                }
+
+                trazas.append(
+                    (inventario_pk, ahora, "traslado", detalle, user_id, json.dumps(meta, ensure_ascii=False), "pendiente")
+                )
+
+            if trazas:
+                with connection.cursor() as cursor:
+                    cursor.executemany(
+                        """
+                        INSERT INTO inventario_trazabilidad
+                            (inventario_id, fecha, accion, detalle, usuario_id, meta, estado)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        trazas,
+                    )
+
+            # ✅ Notificación al destinatario
+            _crear_notificacion_traslado_pendiente(
+                destinatario_id=int(destinatario_id),
+                emisor_id=int(user_id),
+                emisor_nombre=nombre_usuario,
+                destinatario_nombre=destinatario_nombre,
+                archivo=filename,
+                ruta_archivo=saved_path,
+                inventarios=inventarios_unicos,
+            )
+
+        # --- 9. Respuesta ---
         response = HttpResponse(
             output.getvalue(),
             content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1159,6 +1301,7 @@ def solicitud_traslado(request):
             {"error": f"Error al generar la solicitud de traslado: {str(e)}"},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
+
 
 @api_view(["GET"])
 @login_required_api
@@ -1714,42 +1857,26 @@ def confirmar_o_cancelar_baja(request):
       "archivo": "solicitud_baja_20260118_204256.xlsx",
       "decision": "confirmar" | "cancelar"
     }
-
-    - Busca todas las filas en inventario_trazabilidad donde:
-        accion = 'baja'
-        estado = 'pendiente'
-        meta->>'archivo' = archivo
-
-    - Si decision = confirmar:
-        - Cambia estado a 'completado'
-        - Actualiza inventario_items.recibido_por_id = 0 para esos items
-
-    - Si decision = cancelar:
-        - Elimina las trazas pendientes asociadas a ese archivo
     """
-
     try:
         data = request.data or {}
         archivo = (data.get("archivo") or "").strip()
         decision = (data.get("decision") or "").strip().lower()
 
         if not archivo:
-            return Response(
-                {"error": "El campo 'archivo' es obligatorio."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"error": "El campo 'archivo' es obligatorio."}, status=status.HTTP_400_BAD_REQUEST)
 
         if decision not in ("confirmar", "cancelar"):
-            return Response(
-                {"error": "El campo 'decision' debe ser 'confirmar' o 'cancelar'."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"error": "El campo 'decision' debe ser 'confirmar' o 'cancelar'."}, status=status.HTTP_400_BAD_REQUEST)
 
         # --- 1) Traer trazas de BAJA pendientes por archivo (meta es JSONB) ---
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, inventario_id
+                SELECT
+                    id,
+                    inventario_id,
+                    COALESCE(meta->>'ruta_archivo','') AS ruta_archivo
                 FROM inventario_trazabilidad
                 WHERE accion = %s
                   AND LOWER(estado) = %s
@@ -1762,23 +1889,28 @@ def confirmar_o_cancelar_baja(request):
 
         if not rows:
             return Response(
-                {
-                    "error": "No se encontraron trazas de baja pendientes para ese archivo.",
-                    "archivo": archivo,
-                },
+                {"error": "No se encontraron trazas de baja pendientes para ese archivo.", "archivo": archivo},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
         traza_ids = [r[0] for r in rows]
-        item_ids = list({r[1] for r in rows if r[1] is not None})  # únicos
+        item_ids = list({r[1] for r in rows if r[1] is not None})
+        ruta_archivo = rows[0][2] if rows else ""
+
+        # Ruta del archivo (si no está en meta, la construimos)
+        file_path = _resolve_generated_file_path(
+            ruta_archivo=ruta_archivo,
+            archivo=archivo,
+            subdir="solicitudes_baja",
+        )
+
         ahora = timezone.now()
         user_id = getattr(request, "user_id", None) or getattr(getattr(request, "user", None), "id", None)
 
         # --- 2) Ejecutar acción en transacción ---
-        with transaction.atomic():
-            with connection.cursor() as cursor:
-                if decision == "confirmar":
-                    # 2.1) Marcar trazas como completadas
+        if decision == "confirmar":
+            with transaction.atomic():
+                with connection.cursor() as cursor:
                     cursor.execute(
                         """
                         UPDATE inventario_trazabilidad
@@ -1788,7 +1920,6 @@ def confirmar_o_cancelar_baja(request):
                         ["completado", traza_ids],
                     )
 
-                    # 2.2) Quitar propietario al item -> asignar 0 (NO NULL)
                     if item_ids:
                         cursor.execute(
                             """
@@ -1799,44 +1930,44 @@ def confirmar_o_cancelar_baja(request):
                             [0, item_ids],
                         )
 
-                    return Response(
-                        {
-                            "mensaje": "Baja confirmada correctamente.",
-                            "archivo": archivo,
-                            "trazas_afectadas": len(traza_ids),
-                            "items_afectados": len(item_ids),
-                            "recibido_por_id_asignado": 0,
-                            "fecha": ahora.isoformat(),
-                            "usuario_id": user_id,
-                        },
-                        status=status.HTTP_200_OK,
-                    )
+            return Response(
+                {
+                    "mensaje": "Baja confirmada correctamente.",
+                    "archivo": archivo,
+                    "trazas_afectadas": len(traza_ids),
+                    "items_afectados": len(item_ids),
+                    "recibido_por_id_asignado": 0,
+                    "fecha": ahora.isoformat(),
+                    "usuario_id": user_id,
+                },
+                status=status.HTTP_200_OK,
+            )
 
-                # decision == "cancelar"
+        # decision == "cancelar"
+        with transaction.atomic():
+            with connection.cursor() as cursor:
                 cursor.execute(
-                    """
-                    DELETE FROM inventario_trazabilidad
-                    WHERE id = ANY(%s)
-                    """,
+                    "DELETE FROM inventario_trazabilidad WHERE id = ANY(%s)",
                     [traza_ids],
                 )
 
-                return Response(
-                    {
-                        "mensaje": "Baja cancelada y trazabilidad eliminada correctamente.",
-                        "archivo": archivo,
-                        "trazas_eliminadas": len(traza_ids),
-                        "fecha": ahora.isoformat(),
-                        "usuario_id": user_id,
-                    },
-                    status=status.HTTP_200_OK,
-                )
+        delete_info = _safe_delete_generated_file(file_path)
+
+        return Response(
+            {
+                "mensaje": "Baja cancelada y trazabilidad eliminada correctamente.",
+                "archivo": archivo,
+                "trazas_eliminadas": len(traza_ids),
+                "fecha": ahora.isoformat(),
+                "usuario_id": user_id,
+                "archivo_eliminacion": delete_info,
+            },
+            status=status.HTTP_200_OK,
+        )
 
     except Exception as e:
-        return Response(
-            {"error": f"Error confirmando/cancelando baja: {str(e)}"},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        )
+        return Response({"error": f"Error confirmando/cancelando baja: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 @api_view(["POST"])
 @login_required_api
@@ -1849,46 +1980,23 @@ def confirmar_cancelar_prestamo(request):
       "archivo": "solicitud_prestamo_20260122_120000.xlsx",
       "accion": "confirmar" | "cancelar"
     }
-
-    Reglas:
-    - Solo opera sobre filas:
-        usuario_id = request.user_id
-        accion = 'Prestamo' (case-insensitive)
-        estado = 'pendiente'
-        meta.archivo_generado (o meta.archivo) = archivo
-    - confirmar:
-        1) valida que todos los items pertenezcan al usuario (recibido_por_id = user_id)
-        2) pone estado = 'completado'
-        3) pone recibido_por_id = 0 en inventario_items
-    - cancelar:
-        borra esas filas de inventario_trazabilidad
     """
     try:
         user_id = getattr(request, "user_id", None) or getattr(getattr(request, "user", None), "id", None)
         if not user_id:
-            return Response(
-                {"error": "No se pudo identificar al usuario autenticado."},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
+            return Response({"error": "No se pudo identificar al usuario autenticado."}, status=status.HTTP_401_UNAUTHORIZED)
 
         data = request.data or {}
         archivo = (data.get("archivo") or "").strip()
         accion = (data.get("accion") or "").strip().lower()
 
         if not archivo:
-            return Response(
-                {"error": "Debes enviar 'archivo' (nombre del archivo generado del préstamo)."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"error": "Debes enviar 'archivo' (nombre del archivo generado del préstamo)."}, status=status.HTTP_400_BAD_REQUEST)
 
         if accion not in ("confirmar", "cancelar"):
-            return Response(
-                {"error": "Debes enviar 'accion' con valor 'confirmar' o 'cancelar'."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"error": "Debes enviar 'accion' con valor 'confirmar' o 'cancelar'."}, status=status.HTTP_400_BAD_REQUEST)
 
         # 1) Traer todas las trazas pendientes de préstamo asociadas a ese archivo
-        #    Soportamos meta->>'archivo_generado' o meta->>'archivo'
         with connection.cursor() as cursor:
             cursor.execute(
                 """
@@ -1896,7 +2004,8 @@ def confirmar_cancelar_prestamo(request):
                     t.id,
                     t.inventario_id,
                     ii.inventario::text AS numero_inventario,
-                    COALESCE(ii.recibido_por_id, 0) AS recibido_por_id
+                    COALESCE(ii.recibido_por_id, 0) AS recibido_por_id,
+                    COALESCE(t.meta->>'ruta_archivo','') AS ruta_archivo
                 FROM inventario_trazabilidad t
                 JOIN inventario_items ii ON ii.id = t.inventario_id
                 WHERE t.usuario_id = %s
@@ -1911,27 +2020,28 @@ def confirmar_cancelar_prestamo(request):
 
         if not rows:
             return Response(
-                {
-                    "error": "No se encontraron préstamos pendientes para ese archivo (o ya fueron confirmados/cancelados).",
-                    "archivo": archivo,
-                },
+                {"error": "No se encontraron préstamos pendientes para ese archivo (o ya fueron confirmados/cancelados).", "archivo": archivo},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
         traza_ids = [r[0] for r in rows]
         inventario_ids = [r[1] for r in rows]
         inventarios_nums = [r[2] for r in rows]
+        ruta_archivo = rows[0][4] if rows else ""
+
+        # Ruta del archivo (si no está en meta, la construimos)
+        file_path = _resolve_generated_file_path(
+            ruta_archivo=ruta_archivo,
+            archivo=archivo,
+            subdir="solicitudes_prestamo",
+        )
 
         if accion == "cancelar":
             with transaction.atomic():
                 with connection.cursor() as cursor:
-                    cursor.execute(
-                        """
-                        DELETE FROM inventario_trazabilidad
-                        WHERE id = ANY(%s)
-                        """,
-                        [traza_ids],
-                    )
+                    cursor.execute("DELETE FROM inventario_trazabilidad WHERE id = ANY(%s)", [traza_ids])
+
+            delete_info = _safe_delete_generated_file(file_path)
 
             return Response(
                 {
@@ -1940,43 +2050,31 @@ def confirmar_cancelar_prestamo(request):
                     "archivo": archivo,
                     "total_trazas_eliminadas": len(traza_ids),
                     "inventarios": inventarios_nums,
+                    "archivo_eliminacion": delete_info,
                 },
                 status=status.HTTP_200_OK,
             )
 
         # accion == "confirmar"
-        # 2) Validar que todos los items todavía pertenezcan al usuario
         not_owned = [
             {"inventario": inv_num, "recibido_por_id_actual": rec_id}
-            for (_, _, inv_num, rec_id) in rows
+            for (_, _, inv_num, rec_id, _) in rows
             if int(rec_id) != int(user_id)
         ]
         if not_owned:
             return Response(
                 {
-                    "error": (
-                        "No se puede confirmar el préstamo porque uno o más elementos "
-                        "ya no pertenecen a este usuario (recibido_por_id != usuario actual)."
-                    ),
+                    "error": "No se puede confirmar el préstamo porque uno o más elementos ya no pertenecen a este usuario (recibido_por_id != usuario actual).",
                     "archivo": archivo,
                     "no_pertenecen_al_usuario": not_owned,
                 },
                 status=status.HTTP_409_CONFLICT,
             )
 
-        # 3) Confirmar: estado -> completado y recibido_por_id -> 0
         now_ts = timezone.now()
         with transaction.atomic():
             with connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    UPDATE inventario_trazabilidad
-                    SET estado = 'completado'
-                    WHERE id = ANY(%s)
-                    """,
-                    [traza_ids],
-                )
-
+                cursor.execute("UPDATE inventario_trazabilidad SET estado = 'completado' WHERE id = ANY(%s)", [traza_ids])
                 cursor.execute(
                     """
                     UPDATE inventario_items
@@ -2000,7 +2098,255 @@ def confirmar_cancelar_prestamo(request):
         )
 
     except Exception as e:
-        return Response(
-            {"error": f"Error al confirmar/cancelar préstamo: {str(e)}"},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        return Response({"error": f"Error al confirmar/cancelar préstamo: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(["POST"])
+@login_required_api
+def confirmar_cancelar_traslado(request):
+    """
+    DESTINATARIO confirma/cancela un traslado agrupado por ARCHIVO.
+
+    Body:
+    {
+      "archivo": "solicitud_traslado_YYYYMMDD_HHMMSS.xlsx",
+      "accion": "confirmar" | "cancelar"
+    }
+    """
+    try:
+        receptor_id = getattr(request, "user_id", None) or getattr(getattr(request, "user", None), "id", None)
+        if not receptor_id:
+            return Response({"error": "No se pudo identificar al usuario autenticado."}, status=status.HTTP_401_UNAUTHORIZED)
+
+        data = request.data or {}
+        archivo = (data.get("archivo") or "").strip()
+        accion = (data.get("accion") or "").strip().lower()
+
+        if not archivo:
+            return Response({"error": "Debes enviar 'archivo'."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if accion not in ("confirmar", "cancelar"):
+            return Response({"error": "Debes enviar 'accion' como 'confirmar' o 'cancelar'."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 1) Buscar notificación pendiente (no leída) para este usuario y archivo
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    id,
+                    COALESCE(meta->>'emisor_id','') AS emisor_id_txt,
+                    COALESCE(leida, FALSE) AS leida
+                FROM notificaciones
+                WHERE usuario_id = %s
+                  AND tipo = %s
+                  AND COALESCE(meta->>'archivo_generado', meta->>'archivo', '') = %s
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """,
+                [receptor_id, "traslado_pendiente", archivo],
+            )
+            notif = cursor.fetchone()
+
+        if not notif:
+            return Response({"error": "No existe una notificación de traslado pendiente para este archivo."}, status=status.HTTP_404_NOT_FOUND)
+
+        notif_id, emisor_id_txt, notif_leida = notif
+        if notif_leida:
+            return Response({"error": "Esta notificación ya fue procesada (leída)."}, status=status.HTTP_409_CONFLICT)
+
+        try:
+            emisor_id = int(emisor_id_txt)
+        except Exception:
+            return Response({"error": "La notificación no tiene un emisor_id válido en meta."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        # 2) Traer trazas pendientes del traslado por archivo y destinatario (usuario_id=emisor)
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    t.id,
+                    t.inventario_id,
+                    ii.inventario::text AS numero_inventario,
+                    COALESCE(ii.recibido_por_id, 0) AS recibido_por_id,
+                    COALESCE(t.meta->>'ruta_archivo','') AS ruta_archivo
+                FROM inventario_trazabilidad t
+                JOIN inventario_items ii ON ii.id = t.inventario_id
+                WHERE LOWER(COALESCE(t.accion,'')) = 'traslado'
+                  AND LOWER(COALESCE(t.estado,'')) = 'pendiente'
+                  AND COALESCE(t.meta->>'archivo_generado', t.meta->>'archivo', '') = %s
+                  AND COALESCE(t.meta->>'destinatario_id','') = %s
+                  AND COALESCE(t.usuario_id, 0) = %s
+                ORDER BY t.fecha ASC, t.id ASC
+                """,
+                [archivo, str(receptor_id), emisor_id],
+            )
+            rows = cursor.fetchall()
+
+        if not rows:
+            return Response({"error": "No se encontraron trazas pendientes de traslado para ese archivo."}, status=status.HTTP_404_NOT_FOUND)
+
+        traza_ids = [r[0] for r in rows]
+        item_ids = [r[1] for r in rows]
+        inv_nums = [r[2] for r in rows]
+        ruta_archivo = rows[0][4] if rows else ""
+
+        # Ruta del archivo (si no está en meta, la construimos)
+        file_path = _resolve_generated_file_path(
+            ruta_archivo=ruta_archivo,
+            archivo=archivo,
+            subdir="solicitudes_traslado",
         )
+
+        now_ts = timezone.now()
+        patch_meta = {"resultado": accion, "resultado_at": now_ts.isoformat()}
+
+        if accion == "cancelar":
+            with transaction.atomic():
+                with connection.cursor() as cursor:
+                    cursor.execute("DELETE FROM inventario_trazabilidad WHERE id = ANY(%s)", [traza_ids])
+
+                    cursor.execute(
+                        """
+                        UPDATE notificaciones
+                        SET leida = TRUE,
+                            leida_at = NOW(),
+                            meta = meta || %s::jsonb
+                        WHERE id = %s
+                        """,
+                        [json.dumps(patch_meta, ensure_ascii=False), notif_id],
+                    )
+
+            delete_info = _safe_delete_generated_file(file_path)
+
+            return Response(
+                {
+                    "ok": True,
+                    "accion": "cancelar",
+                    "archivo": archivo,
+                    "notificacion_id": notif_id,
+                    "trazas_eliminadas": len(traza_ids),
+                    "inventarios": inv_nums,
+                    "archivo_eliminacion": delete_info,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        # confirmar: validar que sigan siendo del emisor
+        no_son_del_emisor = [
+            {"inventario": inv, "recibido_por_id_actual": int(rec_id)}
+            for (_, _, inv, rec_id, _) in rows
+            if int(rec_id) != int(emisor_id)
+        ]
+        if no_son_del_emisor:
+            return Response(
+                {"error": "No se puede confirmar: uno o más items ya no pertenecen al emisor.", "no_son_del_emisor": no_son_del_emisor},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        with transaction.atomic():
+            with connection.cursor() as cursor:
+                cursor.execute("UPDATE inventario_trazabilidad SET estado='completado' WHERE id = ANY(%s)", [traza_ids])
+
+                cursor.execute(
+                    """
+                    UPDATE inventario_items
+                    SET recibido_por_id = %s
+                    WHERE id = ANY(%s)
+                      AND recibido_por_id = %s
+                    """,
+                    [receptor_id, item_ids, emisor_id],
+                )
+
+                cursor.execute(
+                    """
+                    UPDATE notificaciones
+                    SET leida = TRUE,
+                        leida_at = NOW(),
+                        meta = meta || %s::jsonb
+                    WHERE id = %s
+                    """,
+                    [json.dumps(patch_meta, ensure_ascii=False), notif_id],
+                )
+
+        return Response(
+            {
+                "ok": True,
+                "accion": "confirmar",
+                "archivo": archivo,
+                "notificacion_id": notif_id,
+                "trazas_confirmadas": len(traza_ids),
+                "items_trasladados": len(item_ids),
+                "inventarios": inv_nums,
+                "fecha_confirmacion": now_ts.isoformat(),
+                "nuevo_propietario": int(receptor_id),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    except Exception as e:
+        return Response({"error": f"Error al confirmar/cancelar traslado: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(["GET"])
+@login_required_api
+def listar_notificaciones(request):
+    """
+    /api/movimientos/notificaciones/?leida=false&tipo=traslado_pendiente
+    """
+    try:
+        user_id = getattr(request, "user_id", None) or getattr(getattr(request, "user", None), "id", None)
+        if not user_id:
+            return Response({"error": "No se pudo identificar al usuario autenticado."}, status=status.HTTP_401_UNAUTHORIZED)
+
+        qp = request.query_params
+        leida_param = (qp.get("leida") or "").strip().lower()
+        tipo = (qp.get("tipo") or "").strip()
+
+        where = ["usuario_id = %s"]
+        params = [user_id]
+
+        if leida_param in ("true", "false"):
+            where.append("leida = %s")
+            params.append(leida_param == "true")
+
+        if tipo:
+            where.append("tipo = %s")
+            params.append(tipo)
+
+        where_sql = " AND ".join(where)
+
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f"""
+                SELECT id, tipo, titulo, cuerpo, meta, leida, created_at, leida_at
+                FROM notificaciones
+                WHERE {where_sql}
+                ORDER BY created_at DESC, id DESC
+                """,
+                params,
+            )
+            rows = cursor.fetchall()
+
+        result = []
+        for (nid, ntipo, titulo, cuerpo, meta_val, leida, created_at, leida_at) in rows:
+            try:
+                meta = meta_val if isinstance(meta_val, dict) else (json.loads(meta_val) if meta_val else {})
+            except Exception:
+                meta = {"_raw": meta_val}
+
+            result.append(
+                {
+                    "id": nid,
+                    "tipo": ntipo,
+                    "titulo": titulo,
+                    "cuerpo": cuerpo,
+                    "meta": meta,
+                    "leida": bool(leida),
+                    "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else str(created_at),
+                    "leida_at": leida_at.isoformat() if (leida_at and hasattr(leida_at, "isoformat")) else (str(leida_at) if leida_at else None),
+                }
+            )
+
+        return Response({"total": len(result), "resultados": result}, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        return Response({"error": f"Error listando notificaciones: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

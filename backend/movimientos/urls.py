@@ -7,7 +7,9 @@ from .views import (
     consultar_trazabilidad_usuario, 
     trazabilidad_por_elemento,
     confirmar_o_cancelar_baja,
-    confirmar_cancelar_prestamo
+    confirmar_cancelar_prestamo,
+    confirmar_cancelar_traslado,
+    listar_notificaciones,
 )
 
 urlpatterns = [
@@ -20,6 +22,8 @@ urlpatterns = [
     path("consultar_trazabilidad_elemento/", trazabilidad_por_elemento, name="consultar_trazabilidad_elemento",),
     path("confirmar_cancelar_baja/", confirmar_o_cancelar_baja, name = "confirmar_cancelar_baja"),
     path("confirmar_cancelar_prestamo/", confirmar_cancelar_prestamo, name = "confirmar_cancelar_prestamo"),
+    path("confirmar_cancelar_traslado/", confirmar_cancelar_traslado, name = "confirmar_cancelar_traslado"),
+    path("listar_notificaciones/", listar_notificaciones, name = "listar_notificaciones"),
 
 
 ]
