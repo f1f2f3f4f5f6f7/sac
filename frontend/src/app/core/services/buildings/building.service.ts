@@ -1,6 +1,7 @@
 import { HttpClient } from '@angular/common/http';
 import { inject, Injectable } from '@angular/core';
 import { BehaviorSubject, Observable, catchError, tap, throwError } from 'rxjs';
+import { IBuilding } from '../../models/buildingModel';
 
 const url = 'http://localhost:8000';
 
@@ -19,13 +20,12 @@ export class BuildingService {
     this._buildings.next(items);
   }
 
-  getBuildings(): any {
+  getBuildings(): Observable<IBuilding[]> {
     return this._httpClient.get(`${url}/api/busquedaGeneral/listar-edificios/`).pipe(
       tap((response: any) => {
         this._buildings.next(response.edificios);
       }),
       catchError((error: any) => {
-        this._buildings.next([]);
         return throwError(() => error);
       })
     );

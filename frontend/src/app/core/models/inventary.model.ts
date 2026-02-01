@@ -28,10 +28,17 @@ export interface IInventaryWriteOff {
   motivo: string;
 }
 
-export type IInventaryLoan = Pick<
-  IInventaryItem,
-  'inventario'
->;
+export type IInventaryLoan = {
+  fecha_devolucion: string;
+  nombre_solicitante: string;
+  unidad_entidad: string;
+  nombre_proyecto: string;
+  justificacion: string;
+  items: IInventaryLoanInventary[];
+};
+
+export type IInventaryLoanInventary = Pick<IInventaryItem, 'inventario'>;
+
 export interface IBusquedaGeneralResult {
   inventario: string;
   ubicacion: string | null;

@@ -14,7 +14,7 @@ import { CardModule } from 'primeng/card';
 import { IconFieldModule } from 'primeng/iconfield';
 import { InputIconModule } from 'primeng/inputicon';
 import { ProgressSpinnerModule } from 'primeng/progressspinner';
-import { UsersService, UserFromBackend } from '../../../services/users/users.service';
+import { UsersService } from '../../../services/users/users.service';
 import { Subject, takeUntil } from 'rxjs';
 import { PasswordModule } from 'primeng/password';
 import { Table } from 'primeng/table';

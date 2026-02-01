@@ -28,7 +28,6 @@ export class InventaryService {
         this._inventary.next(response.items);
       }),
       catchError((error: any) => {
-        this._inventary.next([]);
         return throwError(() => error);
       })
     );
