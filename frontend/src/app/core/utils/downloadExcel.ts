@@ -1,10 +1,10 @@
-export function downLoadExcel(blob: Blob) {
+export function downLoadExcel(blob: Blob, tramite: string) {
   const urlArchivo = window.URL.createObjectURL(blob);
 
   const link = document.createElement('a');
   link.href = urlArchivo;
 
-  link.download = `Solicitud_Baja_${new Date().getTime()}.xlsx`;
+  link.download = `${tramite}_${new Date().toISOString().split('T')[0]}.xlsx`;
 
   link.target = '_blank';
 

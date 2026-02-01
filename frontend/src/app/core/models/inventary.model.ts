@@ -24,6 +24,10 @@ export type IInvetaryItemToInventoried = Pick<
 >;
 
 export interface IInventaryWriteOff {
+  items: IItemWriteOff[]
+}
+
+export interface IItemWriteOff {
   inventario: string;
   motivo: string;
 }
@@ -36,6 +40,11 @@ export type IInventaryLoan = {
   justificacion: string;
   items: IInventaryLoanInventary[];
 };
+
+export type IInvetaryTransfer = {
+  destinatario_nombre: string
+  items: IItemWriteOff[];
+}
 
 export type IInventaryLoanInventary = Pick<IInventaryItem, 'inventario'>;
 

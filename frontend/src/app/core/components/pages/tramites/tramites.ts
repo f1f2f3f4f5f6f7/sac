@@ -7,6 +7,8 @@ import {
   IInventaryLoan,
   IInventaryLoanInventary,
   IInventaryWriteOff,
+  IInvetaryTransfer,
+  IItemWriteOff,
 } from '../../../models/inventary.model';
 import { MessageModule } from 'primeng/message';
 import { Table, TableModule } from 'primeng/table';
@@ -85,7 +87,9 @@ export class Tramites {
   /* ------------------------------ */
 
   /* Dar de baja */
-  inventaryToWriteOff: IInventaryWriteOff[] = [];
+  inventaryToWriteOff: IInventaryWriteOff = {
+    items: [],
+  };
   /* ------------------------------ */
 
   constructor(
@@ -98,6 +102,7 @@ export class Tramites {
     this.paths = [
       { name: 'Dar de baja', code: 'DB' },
       { name: 'Préstamo de equipos', code: 'PE' },
+      { name: 'Traslado de equipos', code: 'TE' },
     ];
     this.inventaryServices.inventary$
       .pipe(
@@ -148,7 +153,7 @@ export class Tramites {
   }
 
   private getInventoryToWriteOff() {
-    this.inventaryToWriteOff = this.seletectedItems.map((item) => ({
+    this.inventaryToWriteOff.items = this.seletectedItems.map((item) => ({
       inventario: item.inventario,
       motivo: '',
     }));
@@ -161,7 +166,7 @@ export class Tramites {
   }
 
   pathSelected() {
-    if (this.selectedPath?.code === 'PE') {
+    if (this.selectedPath?.code === 'PE' || this.selectedPath?.code === 'TE') {
       this.userService.users$
         .pipe(
           takeUntil(this.$destroy),
@@ -191,20 +196,25 @@ export class Tramites {
   }
 
   updateValue(inventario: string, value: string) {
-    const itemExistente = this.inventaryToWriteOff?.find((item) => item.inventario === inventario);
+    const itemExistente = this.inventaryToWriteOff?.items.find(
+      (item) => item.inventario === inventario,
+    );
     if (itemExistente) {
       itemExistente.motivo = value;
     } else {
-      this.inventaryToWriteOff?.push({ inventario, motivo: value });
+      this.inventaryToWriteOff.items.push({ inventario, motivo: value });
     }
   }
 
   confirmTramite() {
     if (this.selectedPath?.code === 'DB') {
-      if (this.inventaryToWriteOff.some((item) => item.motivo === '')) {
+      if (this.inventaryToWriteOff.items.some((item) => item.motivo === '')) {
         this.errorMessage('El motivo de baja no puede estar vacio');
       } else {
-        this.doTramite(this.inventaryToWriteOff, 'solicitud_baja');
+        const writeOffRequest: IInventaryWriteOff = {
+          items: this.inventaryToWriteOff.items,
+        };
+        this.doTramite(writeOffRequest, 'solicitud_baja');
       }
     } else if (this.selectedPath?.code === 'PE') {
       if (
@@ -227,16 +237,31 @@ export class Tramites {
         console.log(loanRequest);
         this.doTramite(loanRequest, 'registrar_prestamo');
       }
+    } else if (this.selectedPath?.code === 'TE') {
+      if (this.inventaryToWriteOff.items.some((item) => item.motivo === '' || !this.selectedUser)) {
+        this.errorMessage(
+          'El motivo de traslado no puede estar vacio o no se ha seleccionado un usuario',
+        );
+      } else {
+        const transferRequest: IInvetaryTransfer = {
+          destinatario_nombre: this.selectedUser!.nombre,
+          items: this.inventaryToWriteOff.items,
+        };
+        this.doTramite(transferRequest, 'solicitud_traslado');
+      }
     }
   }
 
-  private doTramite(items: IInventaryWriteOff[] | IInventaryLoan, tramite: string) {
+  private doTramite(
+    items: IInventaryWriteOff | IInventaryLoan | IInvetaryTransfer,
+    tramite: string,
+  ) {
     this.formalitiesService.tramite(items, tramite).subscribe({
       next: (blob: Blob) => {
-        downLoadExcel(blob);
+        downLoadExcel(blob, tramite);
         this.selectedPath = null;
         this.seletectedItems = [];
-        this.inventaryToWriteOff = [];
+        this.inventaryToWriteOff.items = [];
         this.activeStep = 1;
       },
       error: (err) => {

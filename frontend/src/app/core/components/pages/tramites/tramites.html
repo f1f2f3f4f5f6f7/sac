@@ -45,7 +45,7 @@
       <p-step
         [value]="3"
         class="flex flex-row flex-auto gap-2"
-        [disabled]="inventaryToWriteOff.length === 0"
+        [disabled]="inventaryToWriteOff.items.length === 0"
       >
         <ng-template #content let-activateCallback="activateCallback" let-value="value">
           <button
@@ -167,7 +167,7 @@
               fluid
             />
             @if (selectedPath?.code === 'DB') {
-              @for (item of inventaryToWriteOff; track $index) {
+              @for (item of inventaryToWriteOff.items; track $index) {
                 <div class="flex flex-wrap md:flex-nowrap gap-2 mt-4 w-full">
                   <p-iconfield class="w-full md:w-auto">
                     <p-inputicon class="pi pi-book" />
@@ -241,6 +241,47 @@
                   <label for="on_label">Justificación</label>
                 </p-floatlabel>
               </div>
+            } @else if (selectedPath?.code === 'TE') {
+              <div class="flex flex-wrap md:flex-nowrap gap-4 mt-2 sm:gap-2">
+                <p-floatlabel class="w-full" variant="on">
+                  <p-select
+                    [options]="users"
+                    [(ngModel)]="selectedUser"
+                    optionLabel="name"
+                    class="mi-select w-full"
+                    inputId="over_label"
+                    appendTo="body"
+                  />
+                  <label for="over_label">Usuario Solicitante</label>
+                </p-floatlabel>
+              </div>
+              @for (item of inventaryToWriteOff.items; track $index) {
+                <div class="flex flex-wrap md:flex-nowrap gap-2 mt-4 w-full">
+                  <p-iconfield class="w-full md:w-auto">
+                    <p-inputicon class="pi pi-book" />
+                    <input
+                      disabled
+                      [value]="item.inventario"
+                      type="text"
+                      pInputText
+                      class="w-full md:w-50"
+                      placeholder="Search"
+                    />
+                  </p-iconfield>
+                  <p-iconfield class="flex-1 w-full">
+                    <p-inputicon class="pi pi-delete-left" />
+                    <input
+                      #inputReason
+                      (blur)="updateValue(item.inventario, inputReason.value)"
+                      [value]="item.motivo"
+                      class="w-full"
+                      type="text"
+                      pInputText
+                      placeholder="Motivo"
+                    />
+                  </p-iconfield>
+                </div>
+              }
             }
             <div class="flex pt-6 justify-between">
               <p-button
@@ -268,7 +309,7 @@
               <p-tag class="m-1" severity="info" [value]="item.inventario" />
             }
             @if (selectedPath?.code === 'DB') {
-              @for (item of inventaryToWriteOff; track $index) {
+              @for (item of inventaryToWriteOff.items; track $index) {
                 <div class="flex flex-wrap md:flex-nowrap gap-2 mt-4 w-full">
                   <p-iconfield class="w-full md:w-auto">
                     <p-inputicon class="pi pi-book" />
@@ -296,8 +337,7 @@
                   </p-iconfield>
                 </div>
               }
-            }
-            @if (selectedPath?.code === 'PE') {
+            } @else if (selectedPath?.code === 'PE') {
               <div class="flex flex-wrap md:flex-nowrap gap-4 mt-2 sm:gap-2">
                 <p-floatlabel class="w-full" variant="on">
                   <p-select
@@ -332,7 +372,13 @@
                 <p-floatlabel class="w-full" variant="on">
                   <p-iconfield class="w-full">
                     <p-inputicon class="pi pi-users" />
-                    <input type="text" disabled [(ngModel)]="projectName" pInputText class="w-full" />
+                    <input
+                      type="text"
+                      disabled
+                      [(ngModel)]="projectName"
+                      pInputText
+                      class="w-full"
+                    />
                   </p-iconfield>
                   <label for="on_label">Nombre Proyecto</label>
                 </p-floatlabel>
@@ -340,11 +386,60 @@
                 <p-floatlabel class="w-full" variant="on">
                   <p-iconfield class="w-full">
                     <p-inputicon class="pi pi-users" />
-                    <input disabled type="text" [(ngModel)]="justification" pInputText class="w-full" />
+                    <input
+                      disabled
+                      type="text"
+                      [(ngModel)]="justification"
+                      pInputText
+                      class="w-full"
+                    />
                   </p-iconfield>
                   <label for="on_label">Justificación</label>
                 </p-floatlabel>
               </div>
+            } @else if (selectedPath?.code === 'TE') {
+              <div class="flex flex-wrap md:flex-nowrap gap-4 mt-2 sm:gap-2">
+                <p-floatlabel class="w-full" variant="on">
+                  <p-select
+                    [options]="users"
+                    [(ngModel)]="selectedUser"
+                    optionLabel="name"
+                    class="mi-select w-full"
+                    inputId="over_label"
+                    appendTo="body"
+                    disabled
+                  />
+                  <label for="over_label">Usuario Destino</label>
+                </p-floatlabel>
+              </div>
+              @for (item of inventaryToWriteOff.items; track $index) {
+                <div class="flex flex-wrap md:flex-nowrap gap-2 mt-4 w-full">
+                  <p-iconfield class="w-full md:w-auto">
+                    <p-inputicon class="pi pi-book" />
+                    <input
+                      disabled
+                      [value]="item.inventario"
+                      type="text"
+                      pInputText
+                      class="w-full md:w-50"
+                      placeholder="Search"
+                    />
+                  </p-iconfield>
+                  <p-iconfield class="flex-1 w-full">
+                    <p-inputicon class="pi pi-delete-left" />
+                    <input
+                      #inputReason
+                      (blur)="updateValue(item.inventario, inputReason.value)"
+                      [value]="item.motivo"
+                      disabled
+                      class="w-full"
+                      type="text"
+                      pInputText
+                      placeholder="Motivo"
+                    />
+                  </p-iconfield>
+                </div>
+              }
             }
             <div class="flex pt-6 justify-between">
               <p-button
