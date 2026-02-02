@@ -121,7 +121,6 @@ export class Tramites {
       .subscribe({
         next: (data) => {
           this.inventario = data;
-          console.log(this.inventario);
         },
         error: () => {
           this.messageService.add({
@@ -179,7 +178,6 @@ export class Tramites {
         )
         .subscribe({
           next: (response: UserFromBackend[] | any) => {
-            console.log(response);
             this.users = response.map((user: UserFromBackend) => ({
               name: user.nombre,
               code: user.codigo,
@@ -234,7 +232,6 @@ export class Tramites {
           justificacion: this.justification,
           items: this.inventaryToLoan,
         };
-        console.log(loanRequest);
         this.doTramite(loanRequest, 'registrar_prestamo');
       }
     } else if (this.selectedPath?.code === 'TE') {
@@ -265,7 +262,7 @@ export class Tramites {
         this.activeStep = 1;
       },
       error: (err) => {
-        this.errorMessage('Error al generar el archivo Excel');
+        this.errorMessage(err.error);
       },
     });
   }
