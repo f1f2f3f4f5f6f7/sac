@@ -1053,7 +1053,7 @@ def obtener_inventario_usuario(request):
                     ii.inventario, ii.descripcion, ii.marca, ii.serial, ii.valor, ii.fecha_recibido,
                     c.nombre as categoria, e.edificio as ubicacion,
                     ur.nombre as responsable, esc.nombre as escuela,
-                    ii.foto
+                    ii.foto, ii.salones as salon, ii.inventoried
                 FROM inventario_items ii
                 LEFT JOIN categorias c ON ii.categoria_id = c.id
                 LEFT JOIN edificios e ON ii.ubicacion_id = e.id
