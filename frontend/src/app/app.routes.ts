@@ -70,6 +70,14 @@ export const routes: Routes = [
         loadComponent: () =>
           import('./core/components/pages/tramites/tramites').then((m) => m.Tramites),
       },
+      {
+        path: 'trazabilidad',
+        canActivate: [authGuard],
+        loadComponent: () =>
+          import('./core/components/pages/trazabilidadProfesor/trazabilidadProfesor').then(
+            (m) => m.TrazabilidadProfesor,
+          ),
+      },
     ],
   },
 ];
