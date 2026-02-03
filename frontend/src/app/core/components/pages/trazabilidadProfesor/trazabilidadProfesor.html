@@ -87,6 +87,13 @@
 
 
           </div>
+          @if (movimientos.length > 0) {
+            <div class="mt-3">
+              <p class="m-0 text-color-secondary">
+                ({{ movimientos.length }} movimientos)
+              </p>
+            </div>
+          }
   
           <!-- MENSAJE DE ERROR -->
           @if (error) {
