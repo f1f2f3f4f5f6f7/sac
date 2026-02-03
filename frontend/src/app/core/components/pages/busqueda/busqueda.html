@@ -60,25 +60,20 @@
               <!-- Panel Foto Mejorado y Responsive -->
               <p-panel styleClass="w-full p-3 border-round-2xl surface-card">
 
-                <div
+                                <div
                   class="flex justify-content-center align-items-center"
-                  style="min-height: 200px; width: 100%"
+                  style="min-height: 200px; width: 100%; height: 100%;"
                 >
                   @if (resultado && resultado.foto_url) {
-                  <p-image
-                    [src]="resultado.foto_url"
-                    alt="Foto del inventario"
-                    [preview]="true"
-                    styleClass="border-round-xl"
-                    [ngStyle]="{
-                      width: '100%',
-                      height: 'auto',
-                      'max-height': '225px',
-                      'object-fit': 'contain'
-                    }"
-                  />
+                    <p-image
+                      styleClass="foto-inventario border-round-xl"
+                      [src]="resultado.foto_url"
+                      alt="Foto del inventario"
+                      [preview]="true"
+                    ></p-image>
                   }
                 </div>
+
               </p-panel>
             </div>
           </div>
