@@ -64,24 +64,16 @@ export class AuthService {
   }
 
   redirectTo(): void {
-    this.user$
-      .pipe(
-        take(1),
-        tap((user) => {
-          if (user?.rol === 'director') {
-            this.router.navigateByUrl('/director');
-          } else {
-            this.router.navigateByUrl('/profesor');
-          }
-        })
-      )
-      .subscribe();
+    if (this.role === 'director') {
+      this.router.navigateByUrl('/director');
+    } else {
+      this.router.navigateByUrl('/profesor');
+    }
   }
 
   logout(): Observable<any> {
     return this._httpClient.post<any>(`${url}/logout/`, {}).pipe(
       tap(() => {
-        // Limpiar token del localStorage
         localStorage.removeItem(USER_LOCAL_STORAGE_KEY);
         localStorage.removeItem(ROLE_LOCAL_STORAGE_KEY);
         // Limpiar usuario del estado
