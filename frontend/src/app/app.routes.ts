@@ -33,6 +33,14 @@ export const routes: Routes = [
             (m) => m.ConfiguracionUsuarioComponent,
           ),
       },
+      {
+        path: 'trazabilidad',
+        canActivate: [authGuard],
+        loadComponent: () =>
+          import('./core/components/pages/trazabilidadDirector/trazabilidadDirector').then(
+            (m) => m.TrazabilidadDirector,
+          ),
+      },
     ],
   },
   {

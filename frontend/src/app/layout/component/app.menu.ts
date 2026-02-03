@@ -32,6 +32,10 @@ export class AppMenu implements OnInit {
                             label: 'Home',
                             items: [{ label: 'Usuarios', icon: 'pi pi-fw pi-users', routerLink: ['/director'] }]
                         },
+                        {
+                            label: 'Movimientos',
+                            items: [{ label: 'Trazabilidad', icon: 'pi pi-fw pi-history', routerLink: ['/director/trazabilidad'] }]
+                        }
                         // Agrega aquí las opciones específicas para el director
                     ];
                 }else{
