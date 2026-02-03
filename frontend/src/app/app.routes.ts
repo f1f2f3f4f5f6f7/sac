@@ -33,6 +33,14 @@ export const routes: Routes = [
             (m) => m.ConfiguracionUsuarioComponent,
           ),
       },
+      {
+        path: 'trazabilidad',
+        canActivate: [authGuard],
+        loadComponent: () =>
+          import('./core/components/pages/trazabilidadDirector/trazabilidadDirector').then(
+            (m) => m.TrazabilidadDirector,
+          ),
+      },
     ],
   },
   {
@@ -69,6 +77,14 @@ export const routes: Routes = [
         canActivate: [authGuard],
         loadComponent: () =>
           import('./core/components/pages/tramites/tramites').then((m) => m.Tramites),
+      },
+      {
+        path: 'trazabilidad',
+        canActivate: [authGuard],
+        loadComponent: () =>
+          import('./core/components/pages/trazabilidadProfesor/trazabilidadProfesor').then(
+            (m) => m.TrazabilidadProfesor,
+          ),
       },
     ],
   },

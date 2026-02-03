@@ -1,0 +1,52 @@
+.trazabilidad-page {
+    .trazabilidad-card {
+      .p-card-body {
+        padding: 1.5rem 1.75rem;
+      }
+    }
+  
+    .filtros-grid {
+      .filtro-item {
+        min-width: 180px;
+        max-width: 220px;
+      }
+  
+      .filtro-limpiar {
+        min-width: auto;
+        max-width: none;
+        margin-left: 1rem;
+        display: flex;
+        align-items: center;
+      }
+    }
+  
+    .trazabilidad-table {
+      .p-datatable-header {
+        border-top-left-radius: 1.5rem;
+        border-top-right-radius: 1.5rem;
+      }
+  
+      .p-datatable-thead > tr > th {
+        font-weight: 600;
+        font-size: 0.9rem;
+      }
+  
+      .p-datatable-tbody > tr > td {
+        vertical-align: middle;
+      }
+    }
+  }
+  
+  @media screen and (max-width: 768px) {
+    .trazabilidad-page {
+      .trazabilidad-card .p-card-body {
+        padding: 1rem;
+      }
+    }
+  }
+  
+  ::ng-deep .trazabilidad-tooltip {
+    max-width: 320px;
+    font-size: 0.85rem;
+    line-height: 1.4;
+  }
