@@ -88,9 +88,6 @@
 
     <ng-template #header>
       <tr>
-        <th style="width: 3rem">
-          <p-tableHeaderCheckbox />
-        </th>
         <th>Ind</th>
         <th style="min-width: 12rem">Inventario</th>
         <th>Descripción</th>
@@ -102,9 +99,6 @@
     </ng-template>
     <ng-template #body let-item let-index="rowIndex">
       <tr>
-        <td style="width: 3rem">
-          <p-tableCheckbox [value]="item" />
-        </td>
         <td>{{ index + 1 }}</td>
         <td style="min-width: 12rem">{{ item.inventario }}</td>
         <td>{{ item.descripcion }}</td>
@@ -116,7 +110,7 @@
           />
         </td>
         <td>{{ item.valor }}</td>
-        <td>{{ item.ubicacion }}</td>
+        <td>{{ item.ubicacion }} ({{item.salon}})</td>
         <td>
           <p-button
             icon="pi pi-pencil"

@@ -51,6 +51,7 @@ export class AppMenu implements OnInit {
                             label: 'Movimientos',
                             items: [
                                 { label: 'Tramites', icon: 'pi pi-fw pi-arrow-right-arrow-left', routerLink: ['/profesor/tramites'] },
+                                { label: 'Tramites Pendientes', icon: 'pi pi-fw pi-clock', routerLink: ['/profesor/tramites-pendientes'] },
                             ]
                         }
                     ];

@@ -8,7 +8,6 @@ import {
   IInventaryLoanInventary,
   IInventaryWriteOff,
   IInvetaryTransfer,
-  IItemWriteOff,
 } from '../../../models/inventary.model';
 import { MessageModule } from 'primeng/message';
 import { Table, TableModule } from 'primeng/table';
@@ -36,7 +35,6 @@ import { UserFromBackend } from '../../../models/user.model';
 import { UsersService } from '../../../services/users/users.service';
 
 interface IPath extends nameCode {}
-interface ISchoolNameCode extends nameCode {}
 
 @Component({
   selector: 'app-tramites',

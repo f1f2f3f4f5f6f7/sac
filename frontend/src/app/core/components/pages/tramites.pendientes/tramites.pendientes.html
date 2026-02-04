@@ -1,0 +1,99 @@
+<div class="card">
+  <p-table
+    #dt
+    [value]="tramitesPending"
+    dataKey="archivo"
+    [globalFilterFields]="['archivo']"
+    [paginator]="true"
+    [rows]="5"
+    [tableStyle]="{ width: '100%', 'table-layout': 'fixed' }"
+  >
+    <ng-template #caption>
+      <div>Tramites Pendientes: {{ tramitesPending.length }}</div>
+      <div class="flex items-center justify-between mt-2"></div>
+    </ng-template>
+
+    <ng-template #header>
+      <tr>
+        <th style="width: 3%">Ind</th>
+        <th pSortableColumn="accion" style="width: 11%">
+          <div class="flex items-center gap-2">
+            Trámite
+            <p-sortIcon field="accion" />
+          </div>
+        </th>
+        <th style="width: 6%">items</th>
+        <th pSortableColumn="fecha_tramite" style="width: 10%">
+          <div class="flex items-center gap-2">
+            Fecha
+            <p-sortIcon field="fecha_tramite" />
+          </div>
+        </th>
+        <th style="width: 6%"></th>
+      </tr>
+    </ng-template>
+    <ng-template #body let-archivo let-rowIndex="rowIndex">
+      <tr [pSelectableRow]="archivo" [pSelectableRowIndex]="rowIndex">
+        <td>{{ rowIndex + 1 }}</td>
+        <td>
+          <p-tag [value]="archivo.accion.toUpperCase()" [severity]="getSeverity(archivo.accion)" />
+        </td>
+        <td>
+          <p-badge [value]="archivo.items.length" severity="info" />
+        </td>
+        <td>
+          {{ parseDate(archivo.fecha_tramite) }}
+        </td>
+        <td>
+          <p-button
+            icon="pi pi-search"
+            (click)="selectArchivo(archivo)"
+            severity="secondary"
+            rounded
+          />
+        </td>
+      </tr>
+    </ng-template>
+  </p-table>
+  <p-dialog
+    [(visible)]="visible"
+    [modal]="true"
+    [breakpoints]="{ '1199px': '75vw', '575px': '90vw' }"
+    [style]="{ width: '50vw' }"
+    [draggable]="false"
+    [resizable]="false"
+  >
+    <ng-template #header>
+      <div class="flex flex-col align-items-center gap-2">
+        <span class="text-2xl font-bold">Confirmar tramite</span>
+        <span>{{ parseDate(selectedArchivo?.fecha_tramite || '') }}</span>
+      </div>
+    </ng-template>
+    <ng-template #content class="p-5">
+      @for (item of selectedArchivo?.items || []; track $index) {
+        <p-card [header]="item.numero_inventario" class="mt-3">
+          <ng-template #subtitle>
+            <p-tag
+              [value]="selectedArchivo?.accion?.toUpperCase()"
+              [severity]="getSeverity(selectedArchivo!.accion)"
+            />
+          </ng-template>
+          <p class="m-0">
+            {{ item.detalle }}
+          </p>
+        </p-card>
+      }
+    </ng-template>
+    <ng-template #footer>
+      <div class="w-full flex space justify-between">
+        <p-button label="Denegar" [outlined]="true" severity="danger" (click)="visible = false" />
+        <p-button
+          label="Confirmar"
+          [outlined]="true"
+          severity="success"
+          (click)="visible = false"
+        />
+      </div>
+    </ng-template>
+  </p-dialog>
+</div>

@@ -70,6 +70,14 @@ export const routes: Routes = [
         loadComponent: () =>
           import('./core/components/pages/tramites/tramites').then((m) => m.Tramites),
       },
+      {
+        path: 'tramites-pendientes',
+        canActivate: [authGuard],
+        loadComponent: () =>
+          import('./core/components/pages/tramites.pendientes/tramites.pendientes').then(
+            (m) => m.TramitesPendientes,
+          ),
+      }
     ],
   },
 ];
