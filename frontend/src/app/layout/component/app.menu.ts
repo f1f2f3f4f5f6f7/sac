@@ -4,95 +4,93 @@ import { RouterModule } from '@angular/router';
 import { MenuItem } from 'primeng/api';
 import { AppMenuitem } from './app.menuitem';
 import { AuthService } from '../../core/auth/auth.service';
-import {map} from 'rxjs';
-
+import { map } from 'rxjs';
 
 @Component({
-    selector: 'app-menu',
-    standalone: true,
-    imports: [CommonModule, AppMenuitem, RouterModule],
-    template: `<ul class="layout-menu">
-        <ng-container *ngFor="let item of model; let i = index">
-            <li app-menuitem *ngIf="!item.separator" [item]="item" [index]="i" [root]="true"></li>
-            <li *ngIf="item.separator" class="menu-separator"></li>
-        </ng-container>
-    </ul> `
+  selector: 'app-menu',
+  standalone: true,
+  imports: [CommonModule, AppMenuitem, RouterModule],
+  template: `<ul class="layout-menu">
+    <ng-container *ngFor="let item of model; let i = index">
+      <li app-menuitem *ngIf="!item.separator" [item]="item" [index]="i" [root]="true"></li>
+      <li *ngIf="item.separator" class="menu-separator"></li>
+    </ng-container>
+  </ul> `,
 })
 export class AppMenu implements OnInit {
-    model: MenuItem[] = [];
+  model: MenuItem[] = [];
 
-    constructor(private authService: AuthService) {}
+  constructor(private authService: AuthService) {}
 
-    ngOnInit() {
-        this.authService.user$.pipe(
-            map((user) => {
-                if (user?.rol === 'director') {
-                    this.model = [
-                        {
-                            label: 'Home',
-                            items: [{ label: 'Usuarios', icon: 'pi pi-fw pi-users', routerLink: ['/director'] }]
-                        },
-                        // Agrega aquí las opciones específicas para el director
-                    ];
-                }else{
-                    this.model = [
-                        {
-                            label: 'Home',
-                            items: [{ label: 'Dashboard', icon: 'pi pi-fw pi-home', routerLink: ['/profesor'] }]
-                        },
-                        {
-                            label: 'Actividades',
-                            items: [
-                                { label: 'Rendición de Inventarío', icon: 'pi pi-fw pi-id-card', routerLink: ['/profesor/rendicion'] },
-                                { label: 'Busqueda General', icon: 'pi pi-fw pi-search', routerLink: ['/profesor/busqueda'] },
-                            ]
-                        },
-                        {
-                            label: 'Movimientos',
-                            items: [
-                                { label: 'Tramites', icon: 'pi pi-fw pi-arrow-right-arrow-left', routerLink: ['/profesor/tramites'] },
-                                { label: 'Tramites Pendientes', icon: 'pi pi-fw pi-clock', routerLink: ['/profesor/tramites-pendientes'] },
-                            ]
-                        }
-                    ];
-                }
-            })
-        ).subscribe();
-        if (this.authService.role === 'director') {
-          this.model = [
+  ngOnInit() {
+    console.log(this.authService.role);
+    if (this.authService.role === 'director') {
+      this.model = [
+        {
+          label: 'Home',
+          items: [{ label: 'Usuarios', icon: 'pi pi-fw pi-users', routerLink: ['/director'] }],
+        },
+        {
+          label: 'Registros',
+          items: [
             {
-              label: 'Home',
-              items: [{ label: 'Usuarios', icon: 'pi pi-fw pi-users', routerLink: ['/director'] }]
+              label: 'Trazabilidad',
+              icon: 'pi pi-fw pi-history',
+              routerLink: ['/director/trazabilidad'],
+            },
+          ],
+        },
+      ];
+    } else {
+      this.model = [
+        {
+          label: 'Home',
+          items: [{ label: 'Dashboard', icon: 'pi pi-fw pi-home', routerLink: ['/profesor'] }],
+        },
+        {
+          label: 'Actividades',
+          items: [
+            {
+              label: 'Rendición de Inventarío',
+              icon: 'pi pi-fw pi-id-card',
+              routerLink: ['/profesor/rendicion'],
             },
             {
-              label: 'Movimientos',
-              items: [{ label: 'Trazabilidad', icon: 'pi pi-fw pi-history', routerLink: ['/director/trazabilidad'] }]
-            }
-          ];
-        } else {
-          this.model = [
+              label: 'Busqueda General',
+              icon: 'pi pi-fw pi-search',
+              routerLink: ['/profesor/busqueda'],
+            },
+          ],
+        },
+        {
+          label: 'Movimientos',
+          items: [
             {
-              label: 'Home',
-              items: [{ label: 'Dashboard', icon: 'pi pi-fw pi-home', routerLink: ['/profesor'] }]
+              label: 'Tramites',
+              icon: 'pi pi-fw pi-arrow-right-arrow-left',
+              routerLink: ['/profesor/tramites'],
             },
             {
-              label: 'Actividades',
-              items: [
-                { label: 'Rendición de Inventarío', icon: 'pi pi-fw pi-id-card', routerLink: ['/profesor/rendicion'] },
-                { label: 'Busqueda General', icon: 'pi pi-fw pi-search', routerLink: ['/profesor/busqueda'] },
-              ]
+              label: 'Tramites Pendientes',
+              icon: 'pi pi-fw pi-clock',
+              routerLink: ['/profesor/tramites-pendientes'],
             },
+          ],
+        },
+        {
+          label: 'Registros',
+          items: [
             {
-              label: 'Movimientos',
-              items: [
-                { label: 'Tramites', icon: 'pi pi-fw pi-arrow-right-arrow-left', routerLink: ['/profesor/tramites'] },
-                { label: 'Trazabilidad', icon: 'pi pi-fw pi-history', routerLink: ['/profesor/trazabilidad'] },
-              ]
-            }
-          ];
-        }
-            
-/*             {
+              label: 'Trazabilidad',
+              icon: 'pi pi-fw pi-history',
+              routerLink: ['/profesor/trazabilidad'],
+            },
+          ],
+        },
+      ];
+    }
+
+    /*             {
                 label: 'Pages',
                 icon: 'pi pi-fw pi-briefcase',
                 routerLink: ['/pages'],
@@ -200,6 +198,5 @@ export class AppMenu implements OnInit {
                     }
                 ]
             } */
-        
-    }
+  }
 }

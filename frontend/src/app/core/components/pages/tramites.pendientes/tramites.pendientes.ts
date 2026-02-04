@@ -1,7 +1,7 @@
 import { Component, OnInit } from '@angular/core';
 import { FormalitiesService } from '../../../services/formalities/formalities.service';
 import { takeUntil, Subject } from 'rxjs';
-import { MessageService } from 'primeng/api';
+import { ConfirmationService, MessageService } from 'primeng/api';
 import { GroupedByArchivo } from '../../../models/tramites.model';
 import { TableModule } from 'primeng/table';
 import { CommonModule } from '@angular/common';
@@ -12,7 +12,7 @@ import { TagModule } from 'primeng/tag';
 import { BadgeModule } from 'primeng/badge';
 import { ButtonModule } from 'primeng/button';
 import { CardModule } from 'primeng/card';
-import { BaseIcon } from "primeng/icons/baseicon";
+import { ConfirmDialogModule } from 'primeng/confirmdialog';
 
 @Component({
   selector: 'app-tramites.pendientes',
@@ -26,11 +26,12 @@ import { BaseIcon } from "primeng/icons/baseicon";
     BadgeModule,
     ButtonModule,
     CardModule,
-],
+    ConfirmDialogModule,
+  ],
   standalone: true,
   templateUrl: './tramites.pendientes.html',
   styleUrl: './tramites.pendientes.scss',
-  providers: [MessageService],
+  providers: [MessageService, ConfirmationService],
 })
 export class TramitesPendientes implements OnInit {
   tramitesPending: GroupedByArchivo[] = [];
@@ -41,6 +42,7 @@ export class TramitesPendientes implements OnInit {
   constructor(
     private formalitiesService: FormalitiesService,
     private messageService: MessageService,
+    private confirmationService: ConfirmationService,
   ) {}
 
   ngOnInit(): void {
@@ -123,6 +125,54 @@ export class TramitesPendientes implements OnInit {
 
     const resultado = `${dia}/${mes}/${anio}`;
     return resultado;
+  }
+
+  denied(event: Event) {
+    this.confirmationService.confirm({
+      target: event.currentTarget as EventTarget,
+      modal: true,
+      message: '¿Deseas confirmar la denegación de este trámite?',
+      icon: 'pi pi-info-circle',
+      acceptLabel: 'Sí, denegar',
+      rejectLabel: 'No, cancelar',
+      rejectButtonProps: {
+        label: 'Cancel',
+        severity: 'secondary',
+        outlined: true,
+      },
+      acceptButtonProps: {
+        label: 'Denegar',
+        severity: 'danger',
+      },
+      accept: () => {
+        //TODO Denegar tramite
+      },
+      closable: false,
+    });
+  }
+
+  approved(event: Event) {
+    this.confirmationService.confirm({
+      target: event.currentTarget as EventTarget,
+      modal: true,
+      message: '¿Deseas confirmar la aprobación de este trámite?',
+      icon: 'pi pi-info-circle',
+      acceptLabel: 'Sí, aprobar',
+      rejectLabel: 'No, cancelar',
+      rejectButtonProps: {
+        label: 'Cancel',
+        severity: 'secondary',
+        outlined: true,
+      },
+      acceptButtonProps: {
+        label: 'Aprobar',
+        severity: 'success',
+      },
+      accept: () => {
+        //TODO Aprobar tramite
+      },
+      closable: false,
+    });
   }
 
   ngOnDestroy() {

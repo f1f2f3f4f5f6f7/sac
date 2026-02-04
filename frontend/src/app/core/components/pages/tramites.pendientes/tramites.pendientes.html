@@ -79,20 +79,21 @@
             />
           </ng-template>
           <p class="m-0">
-            {{ item.detalle }}
+            {{ item.descripcion_item }}
           </p>
         </p-card>
       }
     </ng-template>
     <ng-template #footer>
+      <p-confirmdialog appendTo="body" [autoZIndex]="true" />
       <div class="w-full flex space justify-between">
-        <p-button label="Denegar" [outlined]="true" severity="danger" (click)="visible = false" />
         <p-button
-          label="Confirmar"
+          label="Denegar"
           [outlined]="true"
-          severity="success"
-          (click)="visible = false"
+          severity="danger"
+          (onClick)="denied($event)"
         />
+        <p-button label="Confirmar" [outlined]="true" severity="success" (onClick)="approved($event)" />
       </div>
     </ng-template>
   </p-dialog>
