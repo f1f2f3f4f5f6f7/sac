@@ -1,25 +1,41 @@
 .buscar-card .p-card-header {
-    text-align: center !important;
+  text-align: center !important;
+}
+
+// Estilos personalizados para el panel de información general
+::ng-deep .informacion-general-panel {
+  .p-panel-content {
+    padding: 1.5rem !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
   }
-  
-  // Estilos personalizados para el panel de información general
-  ::ng-deep .informacion-general-panel {
-    .p-panel-content {
-      padding: 1.5rem !important; // Ajusta el padding interno
-      display: flex !important;
-      flex-direction: column !important;
-      align-items: center !important; // Centra horizontalmente
-      justify-content: center !important; // Centra verticalmente
-      // Agrega más estilos según necesites
-    }
-    
-    .p-datatable {
-      width: 100% !important;
-      // Ajusta el ancho de la tabla
-    }
-    
-    .p-datatable-tbody > tr > td {
-      padding: 0.75rem !important; // Ajusta el padding de las celdas
-      // Agrega más estilos para las celdas
-    }
+
+  .p-datatable {
+    width: 100% !important;
   }
+
+  .p-datatable-tbody > tr > td {
+    padding: 0.75rem !important;
+  }
+}
+
+/* CONTENEDOR DEL p-image */
+::ng-deep .foto-inventario {
+  width: 100% !important;
+  height: 100% !important;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+/* IMAGEN REAL */
+::ng-deep .foto-inventario img {
+  max-width: 100% !important;
+  max-height: clamp(220px, 35vh, 420px) !important;
+  width: auto !important;
+  height: auto !important;
+  object-fit: contain !important;
+}
+

@@ -24,9 +24,12 @@ from django.db import connection, transaction
 def _formatear_fecha_ddmmaaaa(fecha: date) -> str:
     """
     Devuelve la fecha con el formato:
-    'D: 20   M: 08    A: 2025'
+     DD-MM-YY
     """
     return f"D: {fecha.day:02d}   M: {fecha.month:02d}    A:  {fecha.year}"
+
+def _fecha_dd_mm_yy():
+    return timezone.now().strftime("%d-%m-%y")
 
 
 def _set_merged_safe(ws, coord: str, value, alignment: Alignment | None = None):
@@ -563,7 +566,7 @@ def solicitud_baja(request):
                 f.write(output.getvalue())
 
         # --- 8. Trazabilidad ---
-        now_ts = timezone.now()
+        now_ts = _fecha_dd_mm_yy()
         with connection.cursor() as cursor:
             for inv in inventarios_unicos:
                 inventario_pk = campos_por_inv[inv]["id"]
@@ -904,7 +907,7 @@ def solicitud_prestamo(request):
                 f.write(output.getvalue())
 
         # -------- 10. Trazabilidad (FIX usuario_id + estado pendiente) --------
-        ahora = timezone.now()
+        ahora = _fecha_dd_mm_yy()
         trazas = []
 
         for inv in inventarios_unicos:
@@ -913,11 +916,8 @@ def solicitud_prestamo(request):
             motivo_item = motivos_por_inv.get(inv, "") or ""
 
             detalle = (
-                f"Préstamo de elemento inventario {inv}. "
                 f"Solicitante: {solicitante_nombre}. "
-                f"Proyecto: {nombre_proyecto}. "
                 f"Fecha devolución: {fecha_devolucion_str}. "
-                f"Motivo item: {motivo_item}"
             )
 
             meta = {
@@ -929,7 +929,7 @@ def solicitud_prestamo(request):
                 "justificacion_prestamo": justificacion_prestamo,
                 "fecha_devolucion": fecha_devolucion_str,  # ✅ clave para bloqueo futuro
                 "motivo_item": motivo_item,
-                "archivo_generado": filename,
+                "archivo": filename,
                 "ruta_archivo": saved_path,
             }
 
@@ -1235,7 +1235,8 @@ def solicitud_traslado(request):
                 f.write(output.getvalue())
 
         # --- 8. Trazabilidad + Notificación (en transacción) ---
-        ahora = timezone.now()
+        ahora = _fecha_dd_mm_yy()
+
 
         with transaction.atomic():
             trazas = []
@@ -1258,7 +1259,7 @@ def solicitud_traslado(request):
                     "destinatario_id": int(destinatario_id),
                     "destinatario_nombre": destinatario_nombre,
                     "motivo": motivo,
-                    "archivo_generado": filename,
+                    "archivo": filename,
                     "ruta_archivo": saved_path,
                 }
 
@@ -1632,7 +1633,12 @@ def consultar_trazabilidad_usuario(request):
             WHERE it.usuario_id = %s
         """
         params = [target_user_id]
-
+        TIPO_ACCION_MAP = {
+            "baja": ["baja"],
+            "traslado": ["traslado"],
+            "prestamo": ["Prestamo", "prestamo"],
+            "préstamo": ["Prestamo", "prestamo"],  # por si te llega con tilde desde frontend
+        }
         # Filtro por tipo (baja | prestamo | traslado)
         if tipo_param:
             acciones = TIPO_ACCION_MAP.get(tipo_param)
@@ -1904,7 +1910,7 @@ def confirmar_o_cancelar_baja(request):
             subdir="solicitudes_baja",
         )
 
-        ahora = timezone.now()
+        ahora = _fecha_dd_mm_yy()
         user_id = getattr(request, "user_id", None) or getattr(getattr(request, "user", None), "id", None)
 
         # --- 2) Ejecutar acción en transacción ---
@@ -2071,7 +2077,7 @@ def confirmar_cancelar_prestamo(request):
                 status=status.HTTP_409_CONFLICT,
             )
 
-        now_ts = timezone.now()
+        now_ts = _fecha_dd_mm_yy()
         with transaction.atomic():
             with connection.cursor() as cursor:
                 cursor.execute("UPDATE inventario_trazabilidad SET estado = 'completado' WHERE id = ANY(%s)", [traza_ids])
@@ -2196,7 +2202,7 @@ def confirmar_cancelar_traslado(request):
             subdir="solicitudes_traslado",
         )
 
-        now_ts = timezone.now()
+        now_ts = _fecha_dd_mm_yy()
         patch_meta = {"resultado": accion, "resultado_at": now_ts.isoformat()}
 
         if accion == "cancelar":

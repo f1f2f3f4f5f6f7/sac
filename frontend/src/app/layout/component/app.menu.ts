@@ -58,6 +58,39 @@ export class AppMenu implements OnInit {
                 }
             })
         ).subscribe();
+        if (this.authService.role === 'director') {
+          this.model = [
+            {
+              label: 'Home',
+              items: [{ label: 'Usuarios', icon: 'pi pi-fw pi-users', routerLink: ['/director'] }]
+            },
+            {
+              label: 'Movimientos',
+              items: [{ label: 'Trazabilidad', icon: 'pi pi-fw pi-history', routerLink: ['/director/trazabilidad'] }]
+            }
+          ];
+        } else {
+          this.model = [
+            {
+              label: 'Home',
+              items: [{ label: 'Dashboard', icon: 'pi pi-fw pi-home', routerLink: ['/profesor'] }]
+            },
+            {
+              label: 'Actividades',
+              items: [
+                { label: 'Rendición de Inventarío', icon: 'pi pi-fw pi-id-card', routerLink: ['/profesor/rendicion'] },
+                { label: 'Busqueda General', icon: 'pi pi-fw pi-search', routerLink: ['/profesor/busqueda'] },
+              ]
+            },
+            {
+              label: 'Movimientos',
+              items: [
+                { label: 'Tramites', icon: 'pi pi-fw pi-arrow-right-arrow-left', routerLink: ['/profesor/tramites'] },
+                { label: 'Trazabilidad', icon: 'pi pi-fw pi-history', routerLink: ['/profesor/trazabilidad'] },
+              ]
+            }
+          ];
+        }
             
 /*             {
                 label: 'Pages',
