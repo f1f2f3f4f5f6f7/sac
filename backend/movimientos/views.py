@@ -425,6 +425,7 @@ def solicitud_baja(request):
                     ii.descripcion,
                     ii.categoria_id,
                     ii.recibido_por_id,
+                    ii.foto,
                     u.nombre AS usuario_nombre
                 FROM inventario_items ii
                 LEFT JOIN usuarios u ON ii.recibido_por_id = u.id
@@ -449,6 +450,7 @@ def solicitud_baja(request):
             descripcion,
             categoria_id,
             recibido_por_id,
+            foto,
             usuario_nombre,
         ) in rows:
             key = str(inventario_num)
@@ -459,6 +461,7 @@ def solicitud_baja(request):
                 "categoria_id": categoria_id,
                 "recibido_por_id": recibido_por_id,
                 "usuario_nombre": usuario_nombre,
+                "foto": foto,
             }
             if usuario_nombre:
                 responsables_nombres.add(usuario_nombre)
@@ -577,6 +580,7 @@ def solicitud_baja(request):
                     "responsable": nombre_responsable,
                     "archivo": filename,
                     "ruta_archivo": file_path,
+                    "foto": campos_por_inv[inv].get("foto"),
                 }
 
                 cursor.execute(
@@ -720,6 +724,7 @@ def solicitud_prestamo(request):
                     ii.valor,
                     ii.categoria_id,
                     ii.recibido_por_id,
+                    ii.foto,
                     u.nombre AS usuario_nombre
                 FROM inventario_items ii
                 LEFT JOIN usuarios u ON ii.recibido_por_id = u.id
@@ -746,7 +751,9 @@ def solicitud_prestamo(request):
             valor,
             categoria_id,
             recibido_por_id,
+            foto,
             usuario_nombre,
+            
         ) in rows:
             campos_por_inv[str(inventario)] = {
                 "id": item_id,
@@ -757,6 +764,7 @@ def solicitud_prestamo(request):
                 "categoria_id": categoria_id,
                 "recibido_por_id": recibido_por_id,
                 "usuario_nombre": usuario_nombre or "",
+                "foto": foto,
             }
             if usuario_nombre:
                 responsables_nombres.add(usuario_nombre)
@@ -931,6 +939,7 @@ def solicitud_prestamo(request):
                 "motivo_item": motivo_item,
                 "archivo": filename,
                 "ruta_archivo": saved_path,
+                "foto": foto,
             }
 
             trazas.append(
@@ -1075,6 +1084,7 @@ def solicitud_traslado(request):
                     ii.inventario,
                     ii.descripcion,
                     ii.categoria_id,
+                    ii.foto,
                     COALESCE(ii.recibido_por_id, 0) AS recibido_por_id
                 FROM inventario_items ii
                 WHERE ii.inventario = ANY(%s)
@@ -1090,12 +1100,13 @@ def solicitud_traslado(request):
             )
 
         campos_por_inv = {}
-        for (item_id, inventario, descripcion, categoria_id, recibido_por_id) in rows:
+        for (item_id, inventario, descripcion, categoria_id, foto, recibido_por_id) in rows:
             campos_por_inv[str(inventario)] = {
                 "id": item_id,
                 "inventario": inventario,
                 "descripcion": descripcion or "",
                 "categoria_id": categoria_id,
+                "foto":foto,
                 "recibido_por_id": int(recibido_por_id or 0),
             }
 
@@ -1245,7 +1256,6 @@ def solicitud_traslado(request):
                 motivo = motivos_por_inv[inv]
 
                 detalle = (
-                    f"Traslado de elemento inventario {inv}. "
                     f"De: {nombre_usuario}. "
                     f"Para: {destinatario_nombre}. "
                     f"Motivo: {motivo}"
@@ -1261,6 +1271,7 @@ def solicitud_traslado(request):
                     "motivo": motivo,
                     "archivo": filename,
                     "ruta_archivo": saved_path,
+                    "foto": campos_por_inv[inv].get("foto"),
                 }
 
                 trazas.append(
