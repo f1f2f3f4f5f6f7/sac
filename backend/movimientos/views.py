@@ -18,6 +18,7 @@ from accounts.views import login_required_api
 import textwrap
 from openpyxl.utils import get_column_letter
 from django.db import connection, transaction
+from django.utils.timezone import now
 
 
 
@@ -896,7 +897,7 @@ def solicitud_prestamo(request):
 
         # -------- 8. Firmas --------
         _set_merged_safe(ws, "D28", nombre_responsable)
-        _set_merged_safe(ws, "F28", solicitante_nombre)
+        _set_merged_safe(ws, "G28", solicitante_nombre)
 
         # -------- 9. Guardar en memoria y en servidor --------
         output = io.BytesIO()
@@ -1869,24 +1870,32 @@ def confirmar_o_cancelar_baja(request):
     """
     Confirma o cancela una solicitud de baja agrupada por ARCHIVO (guardado en meta).
 
-    Body JSON:
+    Body (multipart/form-data o json):
     {
       "archivo": "solicitud_baja_20260118_204256.xlsx",
-      "decision": "confirmar" | "cancelar"
+      "decision": "confirmar" | "cancelar",
+      "archivo_firmado": <file> (opcional)
     }
     """
     try:
         data = request.data or {}
         archivo = (data.get("archivo") or "").strip()
         decision = (data.get("decision") or "").strip().lower()
+        archivo_firmado = request.FILES.get("archivo_firmado")
 
         if not archivo:
-            return Response({"error": "El campo 'archivo' es obligatorio."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "El campo 'archivo' es obligatorio."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         if decision not in ("confirmar", "cancelar"):
-            return Response({"error": "El campo 'decision' debe ser 'confirmar' o 'cancelar'."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "El campo 'decision' debe ser 'confirmar' o 'cancelar'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        # --- 1) Traer trazas de BAJA pendientes por archivo (meta es JSONB) ---
+        # 1) Traer trazas de BAJA pendientes por archivo
         with connection.cursor() as cursor:
             cursor.execute(
                 """
@@ -1906,7 +1915,10 @@ def confirmar_o_cancelar_baja(request):
 
         if not rows:
             return Response(
-                {"error": "No se encontraron trazas de baja pendientes para ese archivo.", "archivo": archivo},
+                {
+                    "error": "No se encontraron trazas de baja pendientes para ese archivo.",
+                    "archivo": archivo,
+                },
                 status=status.HTTP_404_NOT_FOUND,
             )
 
@@ -1914,17 +1926,25 @@ def confirmar_o_cancelar_baja(request):
         item_ids = list({r[1] for r in rows if r[1] is not None})
         ruta_archivo = rows[0][2] if rows else ""
 
-        # Ruta del archivo (si no está en meta, la construimos)
+        # 2) Resolver ruta del archivo generado
         file_path = _resolve_generated_file_path(
             ruta_archivo=ruta_archivo,
             archivo=archivo,
             subdir="solicitudes_baja",
         )
 
+        # 3) Si viene archivo firmado → sobrescribir archivo original
+        if archivo_firmado:
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
+            with open(file_path, "wb+") as destino:
+                for chunk in archivo_firmado.chunks():
+                    destino.write(chunk)
+
         ahora = _fecha_dd_mm_yy()
         user_id = getattr(request, "user_id", None) or getattr(getattr(request, "user", None), "id", None)
 
-        # --- 2) Ejecutar acción en transacción ---
+        # 4) Confirmar BAJA
         if decision == "confirmar":
             with transaction.atomic():
                 with connection.cursor() as cursor:
@@ -1951,16 +1971,17 @@ def confirmar_o_cancelar_baja(request):
                 {
                     "mensaje": "Baja confirmada correctamente.",
                     "archivo": archivo,
+                    "archivo_firmado_reemplazado": bool(archivo_firmado),
                     "trazas_afectadas": len(traza_ids),
                     "items_afectados": len(item_ids),
                     "recibido_por_id_asignado": 0,
-                    "fecha": ahora.isoformat(),
+                    "fecha": ahora,
                     "usuario_id": user_id,
                 },
                 status=status.HTTP_200_OK,
             )
 
-        # decision == "cancelar"
+        # 5) Cancelar BAJA
         with transaction.atomic():
             with connection.cursor() as cursor:
                 cursor.execute(
@@ -1975,7 +1996,7 @@ def confirmar_o_cancelar_baja(request):
                 "mensaje": "Baja cancelada y trazabilidad eliminada correctamente.",
                 "archivo": archivo,
                 "trazas_eliminadas": len(traza_ids),
-                "fecha": ahora.isoformat(),
+                "fecha": ahora,
                 "usuario_id": user_id,
                 "archivo_eliminacion": delete_info,
             },
@@ -1983,7 +2004,11 @@ def confirmar_o_cancelar_baja(request):
         )
 
     except Exception as e:
-        return Response({"error": f"Error confirmando/cancelando baja: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response(
+            {"error": f"Error confirmando/cancelando baja: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
 
 
 @api_view(["POST"])
@@ -1992,28 +2017,39 @@ def confirmar_cancelar_prestamo(request):
     """
     Confirma o cancela un PRÉSTAMO agrupado por el archivo (meta.archivo_generado).
 
-    Body:
+    Body (multipart/form-data o json):
     {
       "archivo": "solicitud_prestamo_20260122_120000.xlsx",
-      "accion": "confirmar" | "cancelar"
+      "accion": "confirmar" | "cancelar",
+      "archivo_firmado": <file> (opcional)
     }
     """
     try:
         user_id = getattr(request, "user_id", None) or getattr(getattr(request, "user", None), "id", None)
         if not user_id:
-            return Response({"error": "No se pudo identificar al usuario autenticado."}, status=status.HTTP_401_UNAUTHORIZED)
+            return Response(
+                {"error": "No se pudo identificar al usuario autenticado."},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
 
         data = request.data or {}
         archivo = (data.get("archivo") or "").strip()
         accion = (data.get("accion") or "").strip().lower()
+        archivo_firmado = request.FILES.get("archivo_firmado")
 
         if not archivo:
-            return Response({"error": "Debes enviar 'archivo' (nombre del archivo generado del préstamo)."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "Debes enviar 'archivo' (nombre del archivo generado del préstamo)."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         if accion not in ("confirmar", "cancelar"):
-            return Response({"error": "Debes enviar 'accion' con valor 'confirmar' o 'cancelar'."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "Debes enviar 'accion' con valor 'confirmar' o 'cancelar'."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-        # 1) Traer todas las trazas pendientes de préstamo asociadas a ese archivo
+        # 1) Traer trazas pendientes
         with connection.cursor() as cursor:
             cursor.execute(
                 """
@@ -2037,7 +2073,10 @@ def confirmar_cancelar_prestamo(request):
 
         if not rows:
             return Response(
-                {"error": "No se encontraron préstamos pendientes para ese archivo (o ya fueron confirmados/cancelados).", "archivo": archivo},
+                {
+                    "error": "No se encontraron préstamos pendientes para ese archivo.",
+                    "archivo": archivo,
+                },
                 status=status.HTTP_404_NOT_FOUND,
             )
 
@@ -2046,17 +2085,31 @@ def confirmar_cancelar_prestamo(request):
         inventarios_nums = [r[2] for r in rows]
         ruta_archivo = rows[0][4] if rows else ""
 
-        # Ruta del archivo (si no está en meta, la construimos)
+        # 2) Resolver ruta del archivo generado
         file_path = _resolve_generated_file_path(
             ruta_archivo=ruta_archivo,
             archivo=archivo,
             subdir="solicitudes_prestamo",
         )
 
+        # 3) Si viene archivo firmado → sobrescribir el archivo generado
+        if archivo_firmado:
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
+            # Sobrescribe SIEMPRE usando el nombre original
+            with open(file_path, "wb+") as destino:
+                for chunk in archivo_firmado.chunks():
+                    destino.write(chunk)
+
+
+        # 4) Cancelar
         if accion == "cancelar":
             with transaction.atomic():
                 with connection.cursor() as cursor:
-                    cursor.execute("DELETE FROM inventario_trazabilidad WHERE id = ANY(%s)", [traza_ids])
+                    cursor.execute(
+                        "DELETE FROM inventario_trazabilidad WHERE id = ANY(%s)",
+                        [traza_ids]
+                    )
 
             delete_info = _safe_delete_generated_file(file_path)
 
@@ -2072,7 +2125,7 @@ def confirmar_cancelar_prestamo(request):
                 status=status.HTTP_200_OK,
             )
 
-        # accion == "confirmar"
+        # 5) Confirmar → validación de pertenencia
         not_owned = [
             {"inventario": inv_num, "recibido_por_id_actual": rec_id}
             for (_, _, inv_num, rec_id, _) in rows
@@ -2081,7 +2134,7 @@ def confirmar_cancelar_prestamo(request):
         if not_owned:
             return Response(
                 {
-                    "error": "No se puede confirmar el préstamo porque uno o más elementos ya no pertenecen a este usuario (recibido_por_id != usuario actual).",
+                    "error": "No se puede confirmar el préstamo porque uno o más elementos ya no pertenecen al usuario.",
                     "archivo": archivo,
                     "no_pertenecen_al_usuario": not_owned,
                 },
@@ -2089,17 +2142,16 @@ def confirmar_cancelar_prestamo(request):
             )
 
         now_ts = _fecha_dd_mm_yy()
+
         with transaction.atomic():
             with connection.cursor() as cursor:
-                cursor.execute("UPDATE inventario_trazabilidad SET estado = 'completado' WHERE id = ANY(%s)", [traza_ids])
                 cursor.execute(
                     """
-                    UPDATE inventario_items
-                    SET recibido_por_id = 0
+                    UPDATE inventario_trazabilidad
+                    SET estado = 'completado'
                     WHERE id = ANY(%s)
-                      AND recibido_por_id = %s
                     """,
-                    [inventario_ids, user_id],
+                    [traza_ids],
                 )
 
         return Response(
@@ -2107,15 +2159,19 @@ def confirmar_cancelar_prestamo(request):
                 "ok": True,
                 "accion": "confirmar",
                 "archivo": archivo,
+                "archivo_firmado_reemplazado": bool(archivo_firmado),
                 "total_trazas_confirmadas": len(traza_ids),
                 "inventarios": inventarios_nums,
-                "fecha_confirmacion": now_ts.isoformat(),
+                "fecha_confirmacion": now()
             },
             status=status.HTTP_200_OK,
         )
 
     except Exception as e:
-        return Response({"error": f"Error al confirmar/cancelar préstamo: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response(
+            {"error": f"Error al confirmar/cancelar préstamo: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
 
 @api_view(["POST"])
 @login_required_api
@@ -2214,7 +2270,7 @@ def confirmar_cancelar_traslado(request):
         )
 
         now_ts = _fecha_dd_mm_yy()
-        patch_meta = {"resultado": accion, "resultado_at": now_ts.isoformat()}
+        patch_meta = {"resultado": accion, "resultado_at": now_ts}
 
         if accion == "cancelar":
             with transaction.atomic():
@@ -2293,7 +2349,7 @@ def confirmar_cancelar_traslado(request):
                 "trazas_confirmadas": len(traza_ids),
                 "items_trasladados": len(item_ids),
                 "inventarios": inv_nums,
-                "fecha_confirmacion": now_ts.isoformat(),
+                "fecha_confirmacion": now_ts,
                 "nuevo_propietario": int(receptor_id),
             },
             status=status.HTTP_200_OK,
