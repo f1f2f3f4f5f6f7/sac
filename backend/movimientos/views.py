@@ -1879,14 +1879,14 @@ def confirmar_o_cancelar_baja(request):
     Body (multipart/form-data o json):
     {
       "archivo": "solicitud_baja_20260118_204256.xlsx",
-      "decision": "confirmar" | "cancelar",
+      "accion": "confirmar" | "cancelar",
       "archivo_firmado": <file> (opcional)
     }
     """
     try:
         data = request.data or {}
         archivo = (data.get("archivo") or "").strip()
-        decision = (data.get("decision") or "").strip().lower()
+        accion = (data.get("accion") or "").strip().lower()
         archivo_firmado = request.FILES.get("archivo_firmado")
 
         if not archivo:
@@ -1895,9 +1895,9 @@ def confirmar_o_cancelar_baja(request):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if decision not in ("confirmar", "cancelar"):
+        if accion not in ("confirmar", "cancelar"):
             return Response(
-                {"error": "El campo 'decision' debe ser 'confirmar' o 'cancelar'."},
+                {"error": "El campo 'accion' debe ser 'confirmar' o 'cancelar'."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -1951,7 +1951,7 @@ def confirmar_o_cancelar_baja(request):
         user_id = getattr(request, "user_id", None) or getattr(getattr(request, "user", None), "id", None)
 
         # 4) Confirmar BAJA
-        if decision == "confirmar":
+        if accion == "confirmar":
             with transaction.atomic():
                 with connection.cursor() as cursor:
                     cursor.execute(
@@ -2472,3 +2472,67 @@ def listar_notificaciones(request):
 
     except Exception as e:
         return Response({"error": f"Error listando notificaciones: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(["GET"])
+@login_required_api
+def descargar_archivo_trazabilidad(request):
+    movimiento_id = request.query_params.get("movimiento_id")
+
+    if not movimiento_id:
+        return Response(
+            {"error": "Debes enviar el parámetro movimiento_id"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        movimiento_id = int(movimiento_id)
+    except ValueError:
+        return Response(
+            {"error": "movimiento_id debe ser un entero"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT meta
+            FROM inventario_trazabilidad
+            WHERE id = %s
+            """,
+            [movimiento_id],
+        )
+        row = cursor.fetchone()
+
+    if not row:
+        return Response(
+            {"error": "No existe un movimiento con ese id."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    meta_raw = row[0]
+    meta = meta_raw if isinstance(meta_raw, dict) else json.loads(meta_raw)
+
+    file_path = meta.get("ruta_archivo")
+    filename = meta.get("archivo")
+
+    if not file_path or not filename:
+        return Response(
+            {"error": "Este movimiento no tiene archivo asociado."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if not os.path.exists(file_path):
+        return Response(
+            {"error": "El archivo no existe en el servidor."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    with open(file_path, "rb") as f:
+        response = HttpResponse(
+            f.read(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response

@@ -10,6 +10,7 @@ from .views import (
     confirmar_cancelar_prestamo,
     confirmar_cancelar_traslado,
     listar_notificaciones,
+    descargar_archivo_trazabilidad,
 )
 
 urlpatterns = [
@@ -24,6 +25,7 @@ urlpatterns = [
     path("confirmar_cancelar_prestamo/", confirmar_cancelar_prestamo, name = "confirmar_cancelar_prestamo"),
     path("confirmar_cancelar_traslado/", confirmar_cancelar_traslado, name = "confirmar_cancelar_traslado"),
     path("listar_notificaciones/", listar_notificaciones, name = "listar_notificaciones"),
+    path("descargar_archivo_trazabilidad/", descargar_archivo_trazabilidad, name = "descargar_archivo_trazabilidad"),
 
 
 ]
