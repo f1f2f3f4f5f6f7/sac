@@ -31,7 +31,13 @@ def _formatear_fecha_ddmmaaaa(fecha: date) -> str:
 
 def _fecha_dd_mm_yy():
     return timezone.now().strftime("%d-%m-%y")
-
+    
+def _fecha_hoy_date():
+    """
+    Fecha actual como DATE real (sin hora).
+    Para usar directamente en la BD.
+    """
+    return date.today()
 
 def _set_merged_safe(ws, coord: str, value, alignment: Alignment | None = None):
     """
@@ -2179,28 +2185,36 @@ def confirmar_cancelar_traslado(request):
     """
     DESTINATARIO confirma/cancela un traslado agrupado por ARCHIVO.
 
-    Body:
+    Body (multipart/form-data o json):
     {
       "archivo": "solicitud_traslado_YYYYMMDD_HHMMSS.xlsx",
-      "accion": "confirmar" | "cancelar"
+      "accion": "confirmar" | "cancelar",
+      "archivo_firmado": <file> (opcional)
     }
     """
     try:
         receptor_id = getattr(request, "user_id", None) or getattr(getattr(request, "user", None), "id", None)
         if not receptor_id:
-            return Response({"error": "No se pudo identificar al usuario autenticado."}, status=status.HTTP_401_UNAUTHORIZED)
+            return Response(
+                {"error": "No se pudo identificar al usuario autenticado."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
 
         data = request.data or {}
         archivo = (data.get("archivo") or "").strip()
         accion = (data.get("accion") or "").strip().lower()
+        archivo_firmado = request.FILES.get("archivo_firmado")
 
         if not archivo:
             return Response({"error": "Debes enviar 'archivo'."}, status=status.HTTP_400_BAD_REQUEST)
 
         if accion not in ("confirmar", "cancelar"):
-            return Response({"error": "Debes enviar 'accion' como 'confirmar' o 'cancelar'."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "Debes enviar 'accion' como 'confirmar' o 'cancelar'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        # 1) Buscar notificación pendiente (no leída) para este usuario y archivo
+        # 1) Buscar notificación pendiente
         with connection.cursor() as cursor:
             cursor.execute(
                 """
@@ -2220,18 +2234,27 @@ def confirmar_cancelar_traslado(request):
             notif = cursor.fetchone()
 
         if not notif:
-            return Response({"error": "No existe una notificación de traslado pendiente para este archivo."}, status=status.HTTP_404_NOT_FOUND)
+            return Response(
+                {"error": "No existe una notificación de traslado pendiente para este archivo."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
         notif_id, emisor_id_txt, notif_leida = notif
         if notif_leida:
-            return Response({"error": "Esta notificación ya fue procesada (leída)."}, status=status.HTTP_409_CONFLICT)
+            return Response(
+                {"error": "Esta notificación ya fue procesada (leída)."},
+                status=status.HTTP_409_CONFLICT,
+            )
 
         try:
             emisor_id = int(emisor_id_txt)
         except Exception:
-            return Response({"error": "La notificación no tiene un emisor_id válido en meta."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response(
+                {"error": "La notificación no tiene un emisor_id válido en meta."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
-        # 2) Traer trazas pendientes del traslado por archivo y destinatario (usuario_id=emisor)
+        # 2) Traer trazas pendientes del traslado
         with connection.cursor() as cursor:
             cursor.execute(
                 """
@@ -2255,27 +2278,42 @@ def confirmar_cancelar_traslado(request):
             rows = cursor.fetchall()
 
         if not rows:
-            return Response({"error": "No se encontraron trazas pendientes de traslado para ese archivo."}, status=status.HTTP_404_NOT_FOUND)
+            return Response(
+                {"error": "No se encontraron trazas pendientes de traslado para ese archivo."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
         traza_ids = [r[0] for r in rows]
         item_ids = [r[1] for r in rows]
         inv_nums = [r[2] for r in rows]
         ruta_archivo = rows[0][4] if rows else ""
 
-        # Ruta del archivo (si no está en meta, la construimos)
+        # 3) Resolver ruta del archivo generado
         file_path = _resolve_generated_file_path(
             ruta_archivo=ruta_archivo,
             archivo=archivo,
             subdir="solicitudes_traslado",
         )
 
+        # 4) Si viene archivo firmado → sobrescribir archivo original
+        if archivo_firmado:
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
+            with open(file_path, "wb+") as destino:
+                for chunk in archivo_firmado.chunks():
+                    destino.write(chunk)
+
         now_ts = _fecha_dd_mm_yy()
         patch_meta = {"resultado": accion, "resultado_at": now_ts}
 
+        # 5) Cancelar traslado
         if accion == "cancelar":
             with transaction.atomic():
                 with connection.cursor() as cursor:
-                    cursor.execute("DELETE FROM inventario_trazabilidad WHERE id = ANY(%s)", [traza_ids])
+                    cursor.execute(
+                        "DELETE FROM inventario_trazabilidad WHERE id = ANY(%s)",
+                        [traza_ids],
+                    )
 
                     cursor.execute(
                         """
@@ -2295,6 +2333,7 @@ def confirmar_cancelar_traslado(request):
                     "ok": True,
                     "accion": "cancelar",
                     "archivo": archivo,
+                    "archivo_firmado_reemplazado": bool(archivo_firmado),
                     "notificacion_id": notif_id,
                     "trazas_eliminadas": len(traza_ids),
                     "inventarios": inv_nums,
@@ -2303,7 +2342,7 @@ def confirmar_cancelar_traslado(request):
                 status=status.HTTP_200_OK,
             )
 
-        # confirmar: validar que sigan siendo del emisor
+        # 6) Confirmar traslado → validar pertenencia al emisor
         no_son_del_emisor = [
             {"inventario": inv, "recibido_por_id_actual": int(rec_id)}
             for (_, _, inv, rec_id, _) in rows
@@ -2311,13 +2350,19 @@ def confirmar_cancelar_traslado(request):
         ]
         if no_son_del_emisor:
             return Response(
-                {"error": "No se puede confirmar: uno o más items ya no pertenecen al emisor.", "no_son_del_emisor": no_son_del_emisor},
+                {
+                    "error": "No se puede confirmar: uno o más items ya no pertenecen al emisor.",
+                    "no_son_del_emisor": no_son_del_emisor,
+                },
                 status=status.HTTP_409_CONFLICT,
             )
 
         with transaction.atomic():
             with connection.cursor() as cursor:
-                cursor.execute("UPDATE inventario_trazabilidad SET estado='completado' WHERE id = ANY(%s)", [traza_ids])
+                cursor.execute(
+                    "UPDATE inventario_trazabilidad SET estado = 'completado' WHERE id = ANY(%s)",
+                    [traza_ids],
+                )
 
                 cursor.execute(
                     """
@@ -2345,6 +2390,7 @@ def confirmar_cancelar_traslado(request):
                 "ok": True,
                 "accion": "confirmar",
                 "archivo": archivo,
+                "archivo_firmado_reemplazado": bool(archivo_firmado),
                 "notificacion_id": notif_id,
                 "trazas_confirmadas": len(traza_ids),
                 "items_trasladados": len(item_ids),
@@ -2356,7 +2402,10 @@ def confirmar_cancelar_traslado(request):
         )
 
     except Exception as e:
-        return Response({"error": f"Error al confirmar/cancelar traslado: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response(
+            {"error": f"Error al confirmar/cancelar traslado: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
 
 
 @api_view(["GET"])
