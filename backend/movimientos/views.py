@@ -19,7 +19,8 @@ import textwrap
 from openpyxl.utils import get_column_letter
 from django.db import connection, transaction
 from django.utils.timezone import now
-
+from copy import copy
+from openpyxl.cell.cell import MergedCell
 
 
 def _formatear_fecha_ddmmaaaa(fecha: date) -> str:
@@ -375,9 +376,6 @@ def _validar_prestamo_activo_por_elemento(item_ids: list[int]):
             }
         )
     return bloqueados
-
-
-
 
 @api_view(["POST"])
 @login_required_api
@@ -922,7 +920,7 @@ def solicitud_prestamo(request):
                 f.write(output.getvalue())
 
         # -------- 10. Trazabilidad (FIX usuario_id + estado pendiente) --------
-        ahora = _fecha_dd_mm_yy()
+        ahora = date.today()
         trazas = []
 
         for inv in inventarios_unicos:
@@ -1177,64 +1175,88 @@ def solicitud_traslado(request):
         _set_merged_safe(ws, "B38", f"Nombre: {nombre_usuario}")
         _set_merged_safe(ws, "C38", f"Nombre: {destinatario_nombre}")
 
-        # --- 6. Tablas ---
+        # --- 6. Tablas (SIN INSERTAR FILAS) ---
+
+        # Límites máximos definidos por el Excel base
+        MAX_MAYORES = 400
+        MAX_MENORES = 500
+        MAX_INTANG = 200
+
         fila_mayores = 10
-        fila_menores = 21
-        fila_intang = 29
+        fila_menores = 412
+        fila_intang = 914
 
         consec_menores = 1
         consec_intang = 1
 
-        for r in range(10, 35):
-            for c in ("E", "F", "G", "H"):
-                ws[f"{c}{r}"].value = None
-            ws.row_dimensions[r].height = 15
+        wrap_top = Alignment(wrap_text=True, vertical="top")
 
         for inv in inventarios_unicos:
             data_item = campos_por_inv[inv]
             desc = data_item["descripcion"]
             categoria = data_item["categoria_id"]
             motivo = motivos_por_inv[inv]
-
             texto_elemento = f"{inv} - {desc}"
 
-            if categoria == 2:  # MAYORES
-                if fila_mayores > 18:
-                    continue
-                fila = fila_mayores
-                ws[f"A{fila}"] = inv
-                _set_merged_safe(ws, f"B{fila}", texto_elemento, wrap_top)
-                ws[f"D{fila}"] = motivo
-                ws[f"D{fila}"].alignment = wrap_top
+            # ---------------- MAYORES ----------------
+            if categoria == 2:
+                if fila_mayores > MAX_MAYORES:
+                    return Response(
+                        {"error": "La cantidad de elementos MAYORES supera el máximo permitido por el formato."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
 
-                autofit_row_height_fixed(ws, fila, cols=("B", "D"), base_height=15, width_factor=0.90, max_height=140)
+                ws.row_dimensions[fila_mayores].hidden = False
+
+                ws[f"A{fila_mayores}"] = inv
+                ws[f"B{fila_mayores}"] = texto_elemento
+                ws[f"B{fila_mayores}"].alignment = wrap_top
+                ws[f"D{fila_mayores}"] = motivo
+                ws[f"D{fila_mayores}"].alignment = wrap_top
+
+                autofit_row_height_fixed(ws, fila_mayores, ("B", "D"))
                 fila_mayores += 1
 
-            elif categoria == 1:  # MENORES
-                if fila_menores > 26:
-                    continue
-                fila = fila_menores
-                ws[f"A{fila}"] = consec_menores
-                _set_merged_safe(ws, f"B{fila}", texto_elemento, wrap_top)
-                ws[f"D{fila}"] = motivo
-                ws[f"D{fila}"].alignment = wrap_top
+            # ---------------- MENORES ----------------
+            elif categoria == 1:
+                if fila_menores > MAX_MENORES:
+                    return Response(
+                        {"error": "La cantidad de elementos MENORES supera el máximo permitido por el formato."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
 
-                autofit_row_height_fixed(ws, fila, cols=("B", "D"), base_height=15, width_factor=0.90, max_height=140)
+                ws.row_dimensions[fila_menores].hidden = False
+
+                ws[f"A{fila_menores}"] = consec_menores
+                ws[f"B{fila_menores}"] = texto_elemento
+                ws[f"B{fila_menores}"].alignment = wrap_top
+                ws[f"D{fila_menores}"] = motivo
+                ws[f"D{fila_menores}"].alignment = wrap_top
+
+                autofit_row_height_fixed(ws, fila_menores, ("B", "D"))
                 fila_menores += 1
                 consec_menores += 1
 
-            elif categoria == 3:  # INTANGIBLES
-                if fila_intang > 34:
-                    continue
-                fila = fila_intang
-                ws[f"A{fila}"] = consec_intang
-                _set_merged_safe(ws, f"B{fila}", texto_elemento, wrap_top)
-                ws[f"D{fila}"] = motivo
-                ws[f"D{fila}"].alignment = wrap_top
+            # ---------------- INTANGIBLES ----------------
+            elif categoria == 3:
+                if fila_intang > MAX_INTANG:
+                    return Response(
+                        {"error": "La cantidad de elementos INTANGIBLES supera el máximo permitido por el formato."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
 
-                autofit_row_height_fixed(ws, fila, cols=("B", "D"), base_height=15, width_factor=0.90, max_height=140)
+                ws.row_dimensions[fila_intang].hidden = False
+
+                ws[f"A{fila_intang}"] = consec_intang
+                ws[f"B{fila_intang}"] = texto_elemento
+                ws[f"B{fila_intang}"].alignment = wrap_top
+                ws[f"D{fila_intang}"] = motivo
+                ws[f"D{fila_intang}"].alignment = wrap_top
+
+                autofit_row_height_fixed(ws, fila_intang, ("B", "D"))
                 fila_intang += 1
                 consec_intang += 1
+
 
         # --- 7. Guardar ---
         output = io.BytesIO()
@@ -1253,7 +1275,7 @@ def solicitud_traslado(request):
                 f.write(output.getvalue())
 
         # --- 8. Trazabilidad + Notificación (en transacción) ---
-        ahora = _fecha_dd_mm_yy()
+        ahora = date.today()
 
 
         with transaction.atomic():
@@ -1947,7 +1969,7 @@ def confirmar_o_cancelar_baja(request):
                 for chunk in archivo_firmado.chunks():
                     destino.write(chunk)
 
-        ahora = _fecha_dd_mm_yy()
+        ahora = date.today()
         user_id = getattr(request, "user_id", None) or getattr(getattr(request, "user", None), "id", None)
 
         # 4) Confirmar BAJA
