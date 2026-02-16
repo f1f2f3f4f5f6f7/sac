@@ -11,6 +11,8 @@ export type GroupedByArchivo = {
     estado: string;
     fecha: string;
     usuario_id: Number 
-    meta: {}
+    meta: {
+      foto?: string | null;
+    }
   }>;
 };

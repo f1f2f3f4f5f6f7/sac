@@ -22,7 +22,7 @@
       </p-step>
       <p-step
         [value]="2"
-        [disabled]="seletectedItems.length === 0"
+        [disabled]="selectedItems.length === 0"
         class="flex flex-row flex-auto gap-2"
       >
         <ng-template #content let-activateCallback="activateCallback" let-value="value">
@@ -73,7 +73,7 @@
               #dt
               [value]="inventario"
               selectionMode="multiple"
-              [(selection)]="seletectedItems"
+              [(selection)]="selectedItems"
               [metaKeySelection]="metaKey"
               dataKey="inventario"
               [globalFilterFields]="['inventario']"
@@ -98,10 +98,11 @@
                 </div>
                 <div>Items: {{ inventario.length }}</div>
                 <div class="flex items-center justify-between mt-2">
-                  Items seleccionados: {{ seletectedItems.length || 0 }}
+                  Items seleccionados: {{ selectedItems.length || 0 }}
                   <p-button
-                    [disabled]="seletectedItems.length === 0"
+                    [disabled]="selectedItems.length === 0"
                     (onClick)="activateCallback(2)"
+                    (onClick)="getData()"
                     label="Siguiente"
                     icon="pi pi-arrow-right"
                     iconPos="right"
@@ -111,6 +112,9 @@
 
               <ng-template #header>
                 <tr>
+                  <th style="width: 5%">
+                    <p-tableHeaderCheckbox></p-tableHeaderCheckbox>
+                  </th>
                   <th style="width: 5%">Ind</th>
                   <th style="width: 20%">Imagen</th>
                   <th style="width: 16%">Inventario</th>
@@ -119,7 +123,10 @@
                 </tr>
               </ng-template>
               <ng-template #body let-item let-rowIndex="rowIndex">
-                <tr (click)="getData()" [pSelectableRow]="item" [pSelectableRowIndex]="rowIndex">
+                <tr [pSelectableRow]="item" [pSelectableRowIndex]="rowIndex">
+                  <td>
+                    <p-tableCheckbox [value]="item"></p-tableCheckbox>
+                  </td>
                   <td>{{ rowIndex + 1 }}</td>
                   <td>
                     <img
@@ -129,7 +136,7 @@
                     />
                   </td>
                   <td>{{ item.inventario }}</td>
-                  <td>{{ item.ubicacion }} ({{item.salon}})</td>
+                  <td>{{ item.ubicacion }} ({{ item.salon }})</td>
                   <td>
                     <p-badge class="pi pi-box" badgeSize="small" [severity]="getSeverity(item)" />
                   </td>
@@ -139,7 +146,7 @@
           </div>
           <div class="flex pb-6 pr-6 pl-6 justify-end">
             <p-button
-              [disabled]="seletectedItems.length === 0"
+              [disabled]="selectedItems.length === 0"
               (onClick)="activateCallback(2)"
               label="Siguiente"
               icon="pi pi-arrow-right"
@@ -151,11 +158,7 @@
       <p-step-panel [value]="2">
         <ng-template #content let-activateCallback="activateCallback">
           <div class="card m-2">
-            <span>Items Seleccionados:</span>
-            @for (item of seletectedItems; track $index) {
-              <p-tag class="m-1" severity="info" [value]="item.inventario" />
-            }
-
+            <span>Items Seleccionados: {{ selectedItems.length }}</span>
             <p-select
               class="mb-6"
               [options]="paths"
@@ -167,33 +170,56 @@
               fluid
             />
             @if (selectedPath?.code === 'DB') {
-              @for (item of inventaryToWriteOff.items; track $index) {
-                <div class="flex flex-wrap md:flex-nowrap gap-2 mt-4 w-full">
-                  <p-iconfield class="w-full md:w-auto">
-                    <p-inputicon class="pi pi-book" />
-                    <input
-                      disabled
-                      [value]="item.inventario"
-                      type="text"
-                      pInputText
-                      class="w-full md:w-50"
-                      placeholder="Search"
+              <div class="flex items-center pb-3">
+                <p-checkbox
+                  [(ngModel)]="sameMotiveForAll"
+                  (onChange)="handleSameMotiveForAll($event)"
+                  [binary]="true"
+                />
+                <label for="ingredient1" class="ml-2"> Mismo motivo para todos </label>
+              </div>
+              <div class="w-full max-h-[64vh] overflow-y-auto pr-2">
+                @for (item of inventaryToWriteOff.items; track $index) {
+                  <div class="flex md:flex-nowrap gap-2 mt-4 w-full">
+                    <p-image
+                      class="w-45 rounded"
+                      [src]="'http://localhost:8000' + item.imagen_url"
+                      (onImageError)="onImageError($event)"
+                      alt="Image"
+                      appendTo="body"
+                      [preview]="true"
+                      imageClass="w-full"
                     />
-                  </p-iconfield>
-                  <p-iconfield class="flex-1 w-full">
-                    <p-inputicon class="pi pi-delete-left" />
-                    <input
-                      #inputReason
-                      (blur)="updateValue(item.inventario, inputReason.value)"
-                      [value]="item.motivo"
-                      class="w-full"
-                      type="text"
-                      pInputText
-                      placeholder="Motivo"
-                    />
-                  </p-iconfield>
-                </div>
-              }
+                    <div class="flex flex-col justify-evenly md:flex-nowrap gap-2 w-full">
+                      <p-iconfield class="w-full md:w-auto">
+                        <p-inputicon class="pi pi-book" />
+                        <input
+                          disabled
+                          [value]="item.inventario"
+                          type="text"
+                          pInputText
+                          class="w-full"
+                          placeholder="Search"
+                        />
+                      </p-iconfield>
+                      <p-floatlabel variant="in">
+                        <p-iconfield class="w-full">
+                          <p-inputicon class="pi pi-delete-left" />
+                          <input
+                            #inputReason
+                            (blur)="updateValue(item.inventario, inputReason.value)"
+                            [value]="item.motivo"
+                            class="w-full"
+                            type="text"
+                            pInputText
+                          />
+                        </p-iconfield>
+                        <label for="in_label">Motivo de Baja</label>
+                      </p-floatlabel>
+                    </div>
+                  </div>
+                }
+              </div>
             } @else if (selectedPath?.code === 'PE') {
               <div class="flex flex-wrap md:flex-nowrap gap-4 mt-2 sm:gap-2">
                 <p-floatlabel class="w-full" variant="on">
@@ -242,7 +268,15 @@
                 </p-floatlabel>
               </div>
             } @else if (selectedPath?.code === 'TE') {
-              <div class="flex flex-wrap md:flex-nowrap gap-4 mt-2 sm:gap-2">
+              <div class="flex items-center pb-3">
+                <p-checkbox
+                  [(ngModel)]="sameMotiveForAll"
+                  (onChange)="handleSameMotiveForAll($event)"
+                  [binary]="true"
+                />
+                <label for="ingredient1" class="ml-2"> Mismo motivo para todos </label>
+              </div>
+              <div class="flex flex-wrap md:flex-nowrap gap-4 mt-2 pb-3 sm:gap-2">
                 <p-floatlabel class="w-full" variant="on">
                   <p-select
                     [options]="users"
@@ -255,35 +289,50 @@
                   <label for="over_label">Usuario Solicitante</label>
                 </p-floatlabel>
               </div>
-              @for (item of inventaryToWriteOff.items; track $index) {
-                <div class="flex flex-wrap md:flex-nowrap gap-2 mt-4 w-full">
-                  <p-iconfield class="w-full md:w-auto">
-                    <p-inputicon class="pi pi-book" />
-                    <input
-                      disabled
-                      [value]="item.inventario"
-                      type="text"
-                      pInputText
-                      class="w-full md:w-50"
-                      placeholder="Search"
+              <div class="w-full max-h-[64vh] overflow-y-auto pr-2">
+                @for (item of inventaryToWriteOff.items; track $index) {
+                  <div class="flex md:flex-nowrap gap-2 mt-4 w-full">
+                    <p-image
+                      class="w-45 rounded"
+                      [src]="'http://localhost:8000' + item.imagen_url"
+                      (onImageError)="onImageError($event)"
+                      alt="Image"
+                      appendTo="body"
+                      [preview]="true"
+                      imageClass="w-full"
                     />
-                  </p-iconfield>
-                  <p-iconfield class="flex-1 w-full">
-                    <p-inputicon class="pi pi-delete-left" />
-                    <input
-                      #inputReason
-                      (blur)="updateValue(item.inventario, inputReason.value)"
-                      [value]="item.motivo"
-                      class="w-full"
-                      type="text"
-                      pInputText
-                      placeholder="Motivo"
-                    />
-                  </p-iconfield>
-                </div>
-              }
+                    <div class="flex flex-col justify-evenly md:flex-nowrap gap-2 w-full">
+                      <p-iconfield class="w-full md:w-auto">
+                        <p-inputicon class="pi pi-book" />
+                        <input
+                          disabled
+                          [value]="item.inventario"
+                          type="text"
+                          pInputText
+                          class="w-full"
+                          placeholder="Search"
+                        />
+                      </p-iconfield>
+                      <p-floatlabel variant="in">
+                        <p-iconfield class="w-full">
+                          <p-inputicon class="pi pi-delete-left" />
+                          <input
+                            #inputReason
+                            (blur)="updateValue(item.inventario, inputReason.value)"
+                            [value]="item.motivo"
+                            class="w-full"
+                            type="text"
+                            pInputText
+                          />
+                        </p-iconfield>
+                        <label for="in_label">Motivo de traslado</label>
+                      </p-floatlabel>
+                    </div>
+                  </div>
+                }
+              </div>
             }
-            <div class="flex pt-6 justify-between">
+            <div class="flex pt-6 pb-2 justify-between">
               <p-button
                 (onClick)="activateCallback(1)"
                 label="Atras"
@@ -304,39 +353,49 @@
       <p-step-panel [value]="3">
         <ng-template #content let-activateCallback="activateCallback">
           <div class="card m-2">
-            <span>Items Seleccionados:</span>
-            @for (item of seletectedItems; track $index) {
-              <p-tag class="m-1" severity="info" [value]="item.inventario" />
-            }
+            <span>Items Seleccionados: {{ selectedItems.length }}</span>
+            <p-select
+              disabled
+              class="mb-6"
+              [options]="paths"
+              [(ngModel)]="selectedPath"
+              optionLabel="name"
+              (onChange)="pathSelected()"
+              placeholder="Seleccionar trámite"
+              appendTo="body"
+              fluid
+            />
             @if (selectedPath?.code === 'DB') {
-              @for (item of inventaryToWriteOff.items; track $index) {
-                <div class="flex flex-wrap md:flex-nowrap gap-2 mt-4 w-full">
-                  <p-iconfield class="w-full md:w-auto">
-                    <p-inputicon class="pi pi-book" />
-                    <input
-                      disabled
-                      [value]="item.inventario"
-                      type="text"
-                      pInputText
-                      class="w-full md:w-50"
-                      placeholder="Search"
-                    />
-                  </p-iconfield>
-                  <p-iconfield class="flex-1 w-full">
-                    <p-inputicon class="pi pi-delete-left" />
-                    <input
-                      #inputReason
-                      (blur)="updateValue(item.inventario, inputReason.value)"
-                      [value]="item.motivo"
-                      disabled
-                      class="w-full"
-                      type="text"
-                      pInputText
-                      placeholder="Motivo"
-                    />
-                  </p-iconfield>
-                </div>
-              }
+              <div class="w-full max-h-[64vh] overflow-y-auto pr-2">
+                @for (item of inventaryToWriteOff.items; track $index) {
+                  <div class="flex flex-wrap md:flex-nowrap gap-2 mt-4 w-full">
+                    <p-iconfield class="w-full md:w-auto">
+                      <p-inputicon class="pi pi-book" />
+                      <input
+                        disabled
+                        [value]="item.inventario"
+                        type="text"
+                        pInputText
+                        class="w-full md:w-50"
+                        placeholder="Search"
+                      />
+                    </p-iconfield>
+                    <p-iconfield class="flex-1 w-full">
+                      <p-inputicon class="pi pi-delete-left" />
+                      <input
+                        #inputReason
+                        (blur)="updateValue(item.inventario, inputReason.value)"
+                        [value]="item.motivo"
+                        disabled
+                        class="w-full"
+                        type="text"
+                        pInputText
+                        placeholder="Motivo"
+                      />
+                    </p-iconfield>
+                  </div>
+                }
+              </div>
             } @else if (selectedPath?.code === 'PE') {
               <div class="flex flex-wrap md:flex-nowrap gap-4 mt-2 sm:gap-2">
                 <p-floatlabel class="w-full" variant="on">
@@ -412,36 +471,38 @@
                   <label for="over_label">Usuario Destino</label>
                 </p-floatlabel>
               </div>
-              @for (item of inventaryToWriteOff.items; track $index) {
-                <div class="flex flex-wrap md:flex-nowrap gap-2 mt-4 w-full">
-                  <p-iconfield class="w-full md:w-auto">
-                    <p-inputicon class="pi pi-book" />
-                    <input
-                      disabled
-                      [value]="item.inventario"
-                      type="text"
-                      pInputText
-                      class="w-full md:w-50"
-                      placeholder="Search"
-                    />
-                  </p-iconfield>
-                  <p-iconfield class="flex-1 w-full">
-                    <p-inputicon class="pi pi-delete-left" />
-                    <input
-                      #inputReason
-                      (blur)="updateValue(item.inventario, inputReason.value)"
-                      [value]="item.motivo"
-                      disabled
-                      class="w-full"
-                      type="text"
-                      pInputText
-                      placeholder="Motivo"
-                    />
-                  </p-iconfield>
-                </div>
-              }
+              <div class="w-full max-h-[64vh] overflow-y-auto pr-2">
+                @for (item of inventaryToWriteOff.items; track $index) {
+                  <div class="flex flex-wrap md:flex-nowrap gap-2 mt-4 w-full">
+                    <p-iconfield class="w-full md:w-auto">
+                      <p-inputicon class="pi pi-book" />
+                      <input
+                        disabled
+                        [value]="item.inventario"
+                        type="text"
+                        pInputText
+                        class="w-full md:w-50"
+                        placeholder="Search"
+                      />
+                    </p-iconfield>
+                    <p-iconfield class="flex-1 w-full">
+                      <p-inputicon class="pi pi-delete-left" />
+                      <input
+                        #inputReason
+                        (blur)="updateValue(item.inventario, inputReason.value)"
+                        [value]="item.motivo"
+                        disabled
+                        class="w-full"
+                        type="text"
+                        pInputText
+                        placeholder="Motivo"
+                      />
+                    </p-iconfield>
+                  </div>
+                }
+              </div>
             }
-            <div class="flex pt-6 justify-between">
+            <div class="flex pt-6 pb-2 justify-between">
               <p-button
                 (onClick)="activateCallback(2)"
                 label="Atras"

@@ -13,6 +13,9 @@ import { BadgeModule } from 'primeng/badge';
 import { ButtonModule } from 'primeng/button';
 import { CardModule } from 'primeng/card';
 import { ConfirmDialogModule } from 'primeng/confirmdialog';
+import { FileUpload, FileUploadHandlerEvent, FileUploadModule } from 'primeng/fileupload';
+import { ToastModule } from 'primeng/toast';
+import { parseDate } from '../../../utils/parseDate';
 
 @Component({
   selector: 'app-tramites.pendientes',
@@ -27,6 +30,8 @@ import { ConfirmDialogModule } from 'primeng/confirmdialog';
     ButtonModule,
     CardModule,
     ConfirmDialogModule,
+    FileUploadModule,
+    ToastModule,
   ],
   standalone: true,
   templateUrl: './tramites.pendientes.html',
@@ -38,6 +43,8 @@ export class TramitesPendientes implements OnInit {
   private $destroy = new Subject<void>();
   selectedArchivo?: GroupedByArchivo;
   visible: boolean = false;
+  uploadedFiles: any[] = [];
+  parseDate = parseDate;
 
   constructor(
     private formalitiesService: FormalitiesService,
@@ -52,7 +59,6 @@ export class TramitesPendientes implements OnInit {
       .subscribe({
         next: (data: GroupedByArchivo[]) => {
           this.tramitesPending = tramitesMap(data);
-          console.log(this.tramitesPending);
         },
         error: () => {
           this.messageService.add({
@@ -108,7 +114,6 @@ export class TramitesPendientes implements OnInit {
 
   selectArchivo(archivo: GroupedByArchivo) {
     this.selectedArchivo = archivo;
-    console.log(this.selectedArchivo);
     this.visible = true;
   }
 
@@ -116,16 +121,6 @@ export class TramitesPendientes implements OnInit {
     event.target.src = 'http://localhost:8000/media/inventario_images/noimage.webp';
   }
 
-  parseDate(dateString: string): string {
-    const fecha = new Date(dateString);
-
-    const dia = String(fecha.getUTCDate()).padStart(2, '0');
-    const mes = String(fecha.getUTCMonth() + 1).padStart(2, '0'); // +1 porque empieza en 0
-    const anio = fecha.getUTCFullYear();
-
-    const resultado = `${dia}/${mes}/${anio}`;
-    return resultado;
-  }
 
   denied(event: Event) {
     this.confirmationService.confirm({
@@ -145,7 +140,7 @@ export class TramitesPendientes implements OnInit {
         severity: 'danger',
       },
       accept: () => {
-        //TODO Denegar tramite
+        this._confirmTramite('cancelar');
       },
       closable: false,
     });
@@ -169,10 +164,58 @@ export class TramitesPendientes implements OnInit {
         severity: 'success',
       },
       accept: () => {
-        //TODO Aprobar tramite
+        this._confirmTramite('confirmar');
       },
       closable: false,
     });
+  }
+
+  _confirmTramite(accion: string) {
+    const body = {
+      archivo: this.selectedArchivo?.archivo || '',
+      accion: accion,
+      tramite: this.getActionLabel(this.selectedArchivo?.accion || ''),
+    };
+    this.formalitiesService.confirmTramitePending(this.uploadedFiles[0], body).subscribe({
+      next: () => {
+        this.messageService.add({
+          severity: 'success',
+          summary: 'Trámite completado',
+        });
+        this.visible = false;
+        this.tramitesPending = this.tramitesPending.filter(
+          (t) => t.archivo !== this.selectedArchivo?.archivo,
+        );
+        this.selectedArchivo = undefined;
+        this.uploadedFiles = [];
+      },
+      error: () => {
+        this.messageService.add({
+          severity: 'error',
+          summary: 'Error',
+          detail: 'Error al completar el trámite',
+        });
+      },
+    });
+  }
+
+  onUpload(event: FileUploadHandlerEvent, fileForm: FileUpload) {
+    for (const file of event.files) {
+      this.uploadedFiles.push(file);
+    }
+  }
+
+  getActionLabel(accion: string): string {
+    switch (accion.toLowerCase()) {
+      case 'traslado':
+        return 'confirmar_cancelar_traslado';
+      case 'baja':
+        return 'confirmar_cancelar_baja';
+      case 'prestamo':
+        return 'confirmar_cancelar_prestamo';
+      default:
+        return 'Acción desconocida';
+    }
   }
 
   ngOnDestroy() {

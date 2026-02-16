@@ -86,8 +86,6 @@ export class EditItem {
   }
 
   async onShowDialog() {
-    console.log(this.selectedItem);
-
     this.video = document.getElementById('video') as HTMLVideoElement;
     this.canvas = document.getElementById('canvas') as HTMLCanvasElement;
     this.button = document.getElementById('startbutton') as HTMLButtonElement;

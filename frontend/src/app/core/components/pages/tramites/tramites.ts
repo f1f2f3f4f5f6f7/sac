@@ -33,6 +33,8 @@ import { nameCode } from '../../../utils/nameCode.model';
 import { ISchool } from '../../../models/school.model';
 import { UserFromBackend } from '../../../models/user.model';
 import { UsersService } from '../../../services/users/users.service';
+import { ImageModule } from 'primeng/image';
+import { CheckboxModule } from 'primeng/checkbox';
 
 interface IPath extends nameCode {}
 
@@ -57,6 +59,8 @@ interface IPath extends nameCode {}
     FloatLabel,
     ToastModule,
     TooltipModule,
+    ImageModule,
+    CheckboxModule,
   ],
   providers: [MessageService],
   standalone: true,
@@ -66,7 +70,7 @@ interface IPath extends nameCode {}
 export class Tramites {
   inventario: IInventaryItem[] = [];
   private $destroy = new Subject<void>();
-  seletectedItems: IInventaryItem[] = [];
+  selectedItems: IInventaryItem[] = [];
   metaKey: boolean = false;
   globalQuery: string = '';
   @ViewChild('dt') dt!: Table;
@@ -88,6 +92,7 @@ export class Tramites {
   inventaryToWriteOff: IInventaryWriteOff = {
     items: [],
   };
+  sameMotiveForAll: Boolean = false;
   /* ------------------------------ */
 
   constructor(
@@ -150,14 +155,15 @@ export class Tramites {
   }
 
   private getInventoryToWriteOff() {
-    this.inventaryToWriteOff.items = this.seletectedItems.map((item) => ({
+    this.inventaryToWriteOff.items = this.selectedItems.map((item) => ({
       inventario: item.inventario,
       motivo: '',
+      imagen_url: item.imagen_url || null,
     }));
   }
 
   private getInventoryToLoan() {
-    this.inventaryToLoan = this.seletectedItems.map((item) => ({
+    this.inventaryToLoan = this.selectedItems.map((item) => ({
       inventario: item.inventario,
     }));
   }
@@ -192,6 +198,13 @@ export class Tramites {
   }
 
   updateValue(inventario: string, value: string) {
+    if (
+      this.sameMotiveForAll &&
+      this.inventaryToWriteOff.items.some((item) => item.motivo === '')
+    ) {
+      this.inventaryToWriteOff.items.forEach((item) => (item.motivo = value));
+    }
+
     const itemExistente = this.inventaryToWriteOff?.items.find(
       (item) => item.inventario === inventario,
     );
@@ -255,7 +268,7 @@ export class Tramites {
       next: (blob: Blob) => {
         downLoadExcel(blob, tramite);
         this.selectedPath = null;
-        this.seletectedItems = [];
+        this.selectedItems = [];
         this.inventaryToWriteOff.items = [];
         this.activeStep = 1;
       },
@@ -263,6 +276,19 @@ export class Tramites {
         this.errorMessage(err.error);
       },
     });
+  }
+
+  handleSameMotiveForAll(evt: any) {
+    const arrayItems = this.inventaryToWriteOff.items;
+    if (evt.checked) {
+      const lastMotive = [...arrayItems].reverse().find((item) => item.motivo !== '')?.motivo;
+      if (!lastMotive) return;
+      arrayItems.forEach((item) => {
+        if (!item.motivo) item.motivo = lastMotive;
+      });
+    } else {
+      arrayItems.forEach((item) => (item.motivo = ''));
+    }
   }
 
   errorMessage(message: string) {

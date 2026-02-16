@@ -30,6 +30,7 @@ export interface IInventaryWriteOff {
 export interface IItemWriteOff {
   inventario: string;
   motivo: string;
+  imagen_url?: string | null;
 }
 
 export type IInventaryLoan = {

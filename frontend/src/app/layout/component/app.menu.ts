@@ -23,12 +23,31 @@ export class AppMenu implements OnInit {
   constructor(private authService: AuthService) {}
 
   ngOnInit() {
-    console.log(this.authService.role);
     if (this.authService.role === 'director') {
       this.model = [
         {
           label: 'Home',
           items: [{ label: 'Usuarios', icon: 'pi pi-fw pi-users', routerLink: ['/director'] }],
+        },
+        {
+          label: 'Movimientos',
+          items: [
+            {
+              label: 'Tramites',
+              icon: 'pi pi-fw pi-arrow-right-arrow-left',
+              routerLink: ['/director/tramites'],
+            },
+            {
+              label: 'Tramites Pendientes',
+              icon: 'pi pi-fw pi-clock',
+              routerLink: ['/director/tramites-pendientes'],
+            },
+            {
+              label: 'Notificaciones',
+              icon: 'pi pi-fw pi-bell',
+              routerLink: ['/director/notificaciones'],
+            },
+          ],
         },
         {
           label: 'Registros',
@@ -74,6 +93,11 @@ export class AppMenu implements OnInit {
               label: 'Tramites Pendientes',
               icon: 'pi pi-fw pi-clock',
               routerLink: ['/profesor/tramites-pendientes'],
+            },
+            {
+              label: 'Notificaciones',
+              icon: 'pi pi-fw pi-bell',
+              routerLink: ['/profesor/notificaciones'],
             },
           ],
         },

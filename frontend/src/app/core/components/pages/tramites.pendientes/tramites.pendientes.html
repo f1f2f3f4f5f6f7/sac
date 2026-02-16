@@ -1,3 +1,4 @@
+<p-toast />
 <div class="card">
   <p-table
     #dt
@@ -70,8 +71,29 @@
       </div>
     </ng-template>
     <ng-template #content class="p-5">
+      <div class="flex flex-wrap gap-6 items-center justify-between">
+        <p-fileupload
+          #fu
+          mode="basic"
+          name="myfile[]"
+          chooseLabel="Soporte"
+          chooseIcon="pi pi-upload"
+          accept=".xls, .xlsx, .csv"
+          maxFileSize="1000000"
+          (onSelect)="onUpload($event, fu)"
+        />
+      </div>
       @for (item of selectedArchivo?.items || []; track $index) {
-        <p-card [header]="item.numero_inventario" class="mt-3">
+        <p-card class="mt-3">
+          <ng-template #title>
+            <img
+              alt="Card"
+              class="w-40 rounded"
+              [src]="'http://localhost:8000/media/' + item.meta.foto"
+              (error)="onImageError($event)"
+            />
+          </ng-template>
+          <ng-template #title>{{ item.numero_inventario }}</ng-template>
           <ng-template #subtitle>
             <p-tag
               [value]="selectedArchivo?.accion?.toUpperCase()"
@@ -87,13 +109,13 @@
     <ng-template #footer>
       <p-confirmdialog appendTo="body" [autoZIndex]="true" />
       <div class="w-full flex space justify-between">
+        <p-button label="Denegar" [outlined]="true" severity="danger" (onClick)="denied($event)" />
         <p-button
-          label="Denegar"
+          label="Confirmar"
           [outlined]="true"
-          severity="danger"
-          (onClick)="denied($event)"
+          severity="success"
+          (onClick)="approved($event)"
         />
-        <p-button label="Confirmar" [outlined]="true" severity="success" (onClick)="approved($event)" />
       </div>
     </ng-template>
   </p-dialog>

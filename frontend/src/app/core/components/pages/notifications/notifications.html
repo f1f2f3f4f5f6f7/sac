@@ -1,0 +1,64 @@
+<p-toast />
+@if (this.notifications.length === 0) {
+  <p>No hay notificaciones</p>
+}
+@for (item of notifications; track $index) {
+  <div class="card">
+    <p-card (click)="selectNotification(item)" [header]="item.titulo">
+      <ng-template #subtitle>
+        <p-tag
+          [value]="isRead(item.leida)"
+          [severity]="getSeverity(item.leida)"
+        />
+      </ng-template>
+      <p class="m-0">
+        {{ item.cuerpo }}
+      </p>
+    </p-card>
+  </div>
+}
+
+<p-dialog
+  [(visible)]="visible"
+  [modal]="true"
+  [breakpoints]="{ '1199px': '75vw', '575px': '90vw' }"
+  [style]="{ width: '50vw' }"
+  [draggable]="false"
+  [resizable]="false"
+>
+  <ng-template #header>
+    <div class="flex flex-col align-items-center gap-2">
+      <span class="text-2xl font-bold">Confirmar tramite</span>
+      <span>{{ parseDate(selectedNotification?.created_at || '') }}</span>
+    </div>
+  </ng-template>
+  <ng-template #content class="p-5">
+    <div class="flex flex-wrap gap-6 items-center justify-between">
+      <p-fileupload
+        #fu
+        mode="basic"
+        name="myfile[]"
+        chooseLabel="Soporte"
+        chooseIcon="pi pi-upload"
+        accept=".xls, .xlsx, .csv"
+        maxFileSize="1000000"
+        (onSelect)="onUpload($event, fu)"
+      />
+    </div>
+    @for (item of selectedNotification?.meta.inventarios || []; track $index) {
+      <p-card class="mt-3" [header]="item"> </p-card>
+    }
+  </ng-template>
+  <ng-template #footer>
+    <p-confirmdialog appendTo="body" [autoZIndex]="true" />
+    <div class="w-full flex space justify-between">
+      <p-button label="Denegar" [outlined]="true" severity="danger" (onClick)="denied($event)" />
+      <p-button
+        label="Confirmar"
+        [outlined]="true"
+        severity="success"
+        (onClick)="approved($event)"
+      />
+    </div>
+  </ng-template>
+</p-dialog>

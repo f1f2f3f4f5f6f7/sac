@@ -56,15 +56,27 @@ export class Busqueda implements OnInit, OnDestroy {
   resultado: IBusquedaGeneralResult | null = null;
   loading = false;
   error: string | null = null;
+  isMobile = window.innerWidth < 768; 
+  
 
   private $destroy = new Subject<void>();
 
   constructor(
     private inventaryService: InventaryService,
     private messageService: MessageService
-  ) {}
+  ) {
+    window.addEventListener('resize', () => {
+    if (window.innerWidth < 768) {
+      this.isMobile = true;
+    } else {
+      this.isMobile = false;
+    }
+});
+  }
 
   ngOnInit(): void {
+  console.log(this.isMobile);
+
     // Ya no necesitamos el debounce, la búsqueda será por botón
   }
 

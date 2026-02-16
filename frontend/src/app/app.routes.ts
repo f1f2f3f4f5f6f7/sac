@@ -34,6 +34,28 @@ export const routes: Routes = [
           ),
       },
       {
+        path: 'tramites',
+        canActivate: [authGuard],
+        loadComponent: () =>
+          import('./core/components/pages/tramites/tramites').then((m) => m.Tramites),
+      },
+      {
+        path: 'tramites-pendientes',
+        canActivate: [authGuard],
+        loadComponent: () =>
+          import('./core/components/pages/tramites.pendientes/tramites.pendientes').then(
+            (m) => m.TramitesPendientes,
+          ),
+      },
+      {
+        path: 'notificaciones',
+        canActivate: [authGuard],
+        loadComponent: () =>
+          import('./core/components/pages/notifications/notifications').then(
+            (m) => m.Notifications,
+          ),
+      },
+      {
         path: 'trazabilidad',
         canActivate: [authGuard],
         loadComponent: () =>
@@ -84,6 +106,14 @@ export const routes: Routes = [
         loadComponent: () =>
           import('./core/components/pages/tramites.pendientes/tramites.pendientes').then(
             (m) => m.TramitesPendientes,
+          ),
+      },
+      {
+        path: 'notificaciones',
+        canActivate: [authGuard],
+        loadComponent: () =>
+          import('./core/components/pages/notifications/notifications').then(
+            (m) => m.Notifications,
           ),
       },
       {

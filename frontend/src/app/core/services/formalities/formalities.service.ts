@@ -53,4 +53,16 @@ export class FormalitiesService {
         catchError((error) => throwError(() => error.error)),
       );
   }
+
+  confirmTramitePending(file: any, body: any) {
+    const formData = new FormData();
+    formData.append('archivo', body.archivo);
+    formData.append('accion', body.accion);
+    formData.append('archivo_firmado', file);
+    return this._httpClient.post(`${url}/${body.tramite}/`, formData).pipe(
+      catchError((error) => {
+        return throwError(() => error.error);
+      }),
+    );
+  }
 }
